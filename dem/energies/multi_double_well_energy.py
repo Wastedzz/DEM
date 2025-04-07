@@ -59,7 +59,7 @@ class MultiDoubleWellEnergy(BaseEnergyFunction):
         self.data_path_train = data_path_train
         self.data_path_val = data_path_val
 
-        self.device = device
+        self.device = 'cpu'
 
         self.val_set_size = 1000
         self.test_set_size = 1000
@@ -76,6 +76,16 @@ class MultiDoubleWellEnergy(BaseEnergyFunction):
         )
 
         super().__init__(dimensionality=dimensionality, is_molecule=is_molecule)
+
+        self.set_device = False
+    
+    def to(self, device):
+        self.device = device
+        if not self.set_device:
+            self._test_set = self._test_set.to(device)
+            self._val_set = self._val_set.to(device)
+            self._train_set = self._train_set.to(device) if self._train_set is not None else None
+
 
     def __call__(self, samples: torch.Tensor) -> torch.Tensor:
         return -self.multi_double_well.energy(samples).squeeze(-1)

@@ -25,7 +25,7 @@ buffer:
   max_length: 10000
   min_sample_length: 1000
   initial_sampler: null
-  device: ${trainer.accelerator}
+  # device: auto
   sample_with_replacement: True
   fill_buffer_during_init: False
   prioritize: False
@@ -36,6 +36,10 @@ num_init_samples: 1024
 num_estimator_mc_samples: 100
 num_samples_to_generate_per_epoch: 1024
 num_samples_to_sample_from_buffer: 512
+use_snis: false
+num_samples_to_snis: 20
+num_samples_to_snis_numerator: 20
+num_samples_to_snis_denominator: 20
 eval_batch_size: 1024
 
 num_integration_steps: 1000

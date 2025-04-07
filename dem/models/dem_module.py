@@ -118,6 +118,10 @@ class DEMLitModule(LightningModule):
         num_estimator_mc_samples: int,
         num_samples_to_generate_per_epoch: int,
         num_samples_to_sample_from_buffer: int,
+        use_snis: bool,
+        num_samples_to_snis: int,
+        num_samples_to_snis_numerator: int,
+        num_samples_to_snis_denominator: int,
         num_samples_to_save: int,
         eval_batch_size: int,
         num_integration_steps: int,
@@ -311,6 +315,16 @@ class DEMLitModule(LightningModule):
         self.num_estimator_mc_samples = num_estimator_mc_samples
         self.num_samples_to_generate_per_epoch = num_samples_to_generate_per_epoch
         self.num_samples_to_sample_from_buffer = num_samples_to_sample_from_buffer
+        self.use_snis = use_snis
+        if not self.use_snis:
+            self.num_samples_to_snis=1
+            self.num_samples_to_snis_numerator=1
+            self.num_samples_to_snis_denominator = 1
+        else:
+            self.num_samples_to_snis = num_samples_to_snis
+            self.num_samples_to_snis_numerator = num_samples_to_snis_numerator
+            self.num_samples_to_snis_denominator = num_samples_to_snis_denominator
+            
         self.num_integration_steps = num_integration_steps
         self.num_samples_to_save = num_samples_to_save
         self.eval_batch_size = eval_batch_size
@@ -418,10 +432,13 @@ class DEMLitModule(LightningModule):
             times = torch.rand(
                 (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
             )
+            # repeat for snis
+            iter_samples = iter_samples.repeat(self.num_samples_to_snis, *(1,) * (iter_samples.dim() - 1))
+            repeat_times = times.repeat(self.num_samples_to_snis, *(1,) * (times.dim() - 1))
 
-            noised_samples = iter_samples + (
-                torch.randn_like(iter_samples) * self.noise_schedule.h(times).sqrt().unsqueeze(-1)
-            )
+            noise = torch.randn_like(iter_samples)
+            sigma = self.noise_schedule.h(repeat_times).sqrt()
+            noised_samples = iter_samples + noise * sigma.unsqueeze(-1)
 
             if self.energy_function.is_molecule:
                 noised_samples = remove_mean(
@@ -430,7 +447,34 @@ class DEMLitModule(LightningModule):
                     self.energy_function.n_spatial_dim,
                 )
 
-            dem_loss = self.get_loss(times, noised_samples)
+            dem_loss = self.get_loss(repeat_times, noised_samples).view(self.num_samples_to_snis, self.num_samples_to_sample_from_buffer)
+            if not self.use_snis:
+                dem_loss = dem_loss.mean(0)
+            else:
+                # numerator
+                snis_nume_sigma = sigma.repeat(self.num_samples_to_snis_numerator, *(1,) * (sigma.dim() - 1))
+                snis_noised_samples = noised_samples.repeat(self.num_samples_to_snis_numerator, *(1,) * (noised_samples.dim() - 1))
+                x_0t = snis_noised_samples + (
+                    torch.randn_like(snis_noised_samples) * snis_nume_sigma.unsqueeze(-1)
+                )
+                log_prob = self.energy_function(x_0t).view(self.num_samples_to_snis_numerator, self.num_samples_to_snis*self.num_samples_to_sample_from_buffer)
+                log_is_nume = torch.logsumexp(log_prob, dim=0)
+
+                # donominator
+                snis_donom_sigma = sigma.repeat(self.num_samples_to_snis_denominator, *(1,) * (sigma.dim() - 1))
+                x0, _, _ = self.buffer.sample(self.num_samples_to_sample_from_buffer*self.num_samples_to_snis*self.num_samples_to_snis_denominator)
+                x0 = x0.view(self.num_samples_to_snis_denominator, *iter_samples.shape)
+                log_is_dom = (-torch.norm(x0 - noised_samples.unsqueeze(0), dim=-1, p=2)/2/snis_donom_sigma.view(self.num_samples_to_snis_denominator, *sigma.shape)).mean(0)
+
+                # log_is_dom = (-(noise**2).sum(-1)/2)
+
+                log_is_ratio = (log_is_nume - log_is_dom).view(self.num_samples_to_snis, self.num_samples_to_sample_from_buffer)
+                log_snis_ratio = log_is_ratio - log_is_ratio.logsumexp(0, keepdim=True)
+                snis_ratio = log_snis_ratio.exp()
+                snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
+                snis_ratio /= snis_ratio.sum(0, keepdim=True)
+                dem_loss = (dem_loss * snis_ratio).sum(0)
+
             # Uncomment for SM
             # dem_loss = self.get_score_loss(times, iter_samples, noised_samples)
             self.log_dict(
@@ -1028,10 +1072,12 @@ class DEMLitModule(LightningModule):
         )
         names = [f"test/full_batch/{name}" for name in names]
         d = dict(zip(names, dists))
-
-        d["test/full_batch/dist_total_var"] = self._compute_total_var(
-            self.energy_function.unnormalize(final_samples), test_set
-        )
+        try:
+            d["test/full_batch/dist_total_var"] = self._compute_total_var(
+                self.energy_function.unnormalize(final_samples), test_set
+            )
+        except:
+            pass
 
         self.log_dict(d, sync_dist=True)
         print(f"Done computing large batch distribution distances. W2 = {dists[1]}")
@@ -1056,6 +1102,8 @@ class DEMLitModule(LightningModule):
 
         :param stage: Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
         """
+        self.buffer.initialize(self.device)
+        self.energy_function.to(self.device)
 
         def _grad_fxn(t, x):
             return self.clipped_grad_fxn(

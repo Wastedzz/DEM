@@ -6,13 +6,13 @@ defaults:
   - energy: gmm
   - model: dem
   - launcher: null
-  - logger: wandb
+  - logger: tensorboard
   - trainer: default
   - paths: default
   - extras: default
   - hydra: default
 
-  - experiment: gmm
+  - experiment: gmm_idem
 
 task_name: "eval"
 

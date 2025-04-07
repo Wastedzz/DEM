@@ -66,30 +66,40 @@ class PrioritisedReplayBuffer:
         self.dim = dim
         self.max_length = max_length
         self.min_sample_length = min_sample_length
-        self.buffer = ReplayData(
-            x=torch.zeros(self.max_length, dim).to(device),
-            log_w=torch.zeros(
-                self.max_length,
-            ).to(device),
-            log_q_old=torch.zeros(
-                self.max_length,
-            ).to(device),
-        )
-        self.possible_indices = torch.arange(self.max_length).to(device)
-        self.device = device
-        self.current_index = 0
+
         self.is_full = False  # whether the buffer is full
         self.can_sample = False  # whether the buffer is full enough to begin sampling
         self.sample_with_replacement = sample_with_replacement
         self.prioritize = prioritize
+        self.fill_buffer_during_init = fill_buffer_during_init
+        self.initial_sampler = initial_sampler
+        self.initizalied = False
 
-        if fill_buffer_during_init:
-            while self.can_sample is False:
-                # fill buffer up minimum length
-                x, log_w, log_q_old = initial_sampler()
-                self.add(x, log_w, log_q_old)
-        else:
-            print("Buffer not initialised, expected that checkpoint will be loaded.")
+    def initialize(self, device):
+        if not self.initizalied:
+            self.buffer = ReplayData(
+                x=torch.zeros(self.max_length, self.dim).to(device),
+                log_w=torch.zeros(
+                    self.max_length,
+                ).to(device),
+                log_q_old=torch.zeros(
+                    self.max_length,
+                ).to(device),
+            )
+            self.possible_indices = torch.arange(self.max_length).to(device)
+            self.device = device
+            self.current_index = 0
+            self.sample_with_replacement = self.sample_with_replacement
+            self.prioritize = self.prioritize
+
+            if self.fill_buffer_during_init:
+                while self.can_sample is False:
+                    # fill buffer up minimum length
+                    x, log_w, log_q_old = self.initial_sampler()
+                    self.add(x, log_w, log_q_old)
+            else:
+                print("Buffer not initialised, expected that checkpoint will be loaded.")
+
 
     @torch.no_grad()
     def add(self, x: torch.Tensor, log_w: torch.Tensor, log_q_old: torch.Tensor) -> None:
@@ -241,27 +251,39 @@ class SimpleBuffer:
         self.dim = dim
         self.max_length = max_length
         self.min_sample_length = min_sample_length
-        self.buffer = SimpleReplayData(
-            x=torch.zeros(self.max_length, dim).to(device),
-            energy=torch.zeros(
-                self.max_length,
-            ).to(device),
-        )
-        self.possible_indices = torch.arange(self.max_length).to(device)
-        self.device = device
-        self.current_index = 0
+
+
         self.is_full = False  # whether the buffer is full
         self.can_sample = False  # whether the buffer is full enough to begin sampling
         self.sample_with_replacement = sample_with_replacement
         self.prioritize = prioritize
+        self.fill_buffer_during_init = fill_buffer_during_init
+        self.initial_sampler = initial_sampler
+        self.initizalied = False
 
-        if fill_buffer_during_init:
-            while self.can_sample is False:
-                # fill buffer up minimum length
-                x, energy = initial_sampler()
-                self.add(x, energy)
-        else:
-            print("Buffer not initialised, expected that checkpoint will be loaded.")
+
+    def initialize(self, device):
+        if not self.initizalied:
+            self.buffer = SimpleReplayData(
+                x=torch.zeros(self.max_length, self.dim).to(device),
+                energy=torch.zeros(
+                    self.max_length,
+                ).to(device),
+            )
+            self.possible_indices = torch.arange(self.max_length).to(device)
+            self.device = device
+            self.current_index = 0
+
+            if self.fill_buffer_during_init:
+                while self.can_sample is False:
+                    # fill buffer up minimum length
+                    x, energy = self.initial_sampler()
+                    self.add(x, energy)
+            else:
+                print("Buffer not initialised, expected that checkpoint will be loaded.")
+
+            self.initizalied = True
+
 
     def __len__(self):
         if self.is_full:

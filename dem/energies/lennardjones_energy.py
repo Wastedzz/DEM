@@ -146,7 +146,7 @@ class LennardJonesEnergy(BaseEnergyFunction):
         elif self.n_particles == 55:
             self.name = "LJ55"
 
-        self.device = device
+        self.device = 'cpu'
 
         self.lennard_jones = LennardJonesPotential(
             dim=dimensionality,
@@ -160,6 +160,16 @@ class LennardJonesEnergy(BaseEnergyFunction):
         )
 
         super().__init__(dimensionality=dimensionality, is_molecule=is_molecule)
+
+        self.set_device = False
+    
+    def to(self, device):
+        self.device = device
+        if not self.set_device:
+            self._test_set = self._test_set.to(device)
+            self._val_set = self._val_set.to(device)
+            self._train_set = self._train_set.to(device) if self._train_set is not None else None
+
 
     def __call__(self, samples: torch.Tensor) -> torch.Tensor:
         return self.lennard_jones._log_prob(samples).squeeze(-1)

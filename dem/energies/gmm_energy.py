@@ -62,6 +62,16 @@ class GMM(BaseEnergyFunction):
             normalization_min=-data_normalization_factor,
             normalization_max=data_normalization_factor,
         )
+        self.set_device = False
+    
+    def to(self, device):
+        self.gmm.to(device)
+        self.gmm.device = device
+        self.device = device
+        if not self.set_device:
+            self._test_set = self._test_set.to(device)
+            self._val_set = self._val_set.to(device)
+            self._train_set = self._train_set.to(device) if self._train_set is not None else None
 
     def setup_test_set(self):
         # test_sample = self.gmm.sample((self.test_set_size,))
