@@ -38,7 +38,10 @@ class Clipper:
 
     def wrap_grad_fxn(self, grad_fxn):
         def _run(*args, **kwargs):
-            scores = grad_fxn(*args, **kwargs)
+            try:
+                val, scores = grad_fxn(*args, **kwargs)
+            except:
+                scores = grad_fxn(*args, **kwargs)
             if self.should_clip_scores:
                 scores = self.clip_scores(scores)
 

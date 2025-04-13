@@ -35,7 +35,7 @@ from .components.mlp import TimeConder
 from .components.noise_schedules import BaseNoiseSchedule
 from .components.prioritised_replay_buffer import PrioritisedReplayBuffer
 from .components.scaling_wrapper import ScalingWrapper
-from .components.score_estimator import estimate_grad_Rt, wrap_for_richardsons
+from .components.score_estimator import estimate_grad_Rt, estimate_grad_and_value_Rt, wrap_for_richardsons
 from .components.score_scaler import BaseScoreScaler
 from .components.sde_integration import integrate_sde
 from .components.sdes import VEReverseSDE
@@ -242,7 +242,7 @@ class DEMLitModule(LightningModule):
 
         self.reverse_sde = VEReverseSDE(self.net, self.noise_schedule)
 
-        grad_fxn = estimate_grad_Rt
+        grad_fxn = estimate_grad_and_value_Rt
         if use_richardsons:
             grad_fxn = wrap_for_richardsons(grad_fxn)
 
@@ -389,7 +389,7 @@ class DEMLitModule(LightningModule):
         return error_norms
 
     def get_loss(self, times: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
-        estimated_score = estimate_grad_Rt(
+        estimated_logpt_xt, estimated_score = estimate_grad_and_value_Rt(
             times,
             samples,
             self.energy_function,
@@ -417,94 +417,94 @@ class DEMLitModule(LightningModule):
 
         error_norms = (predicted_score - estimated_score).pow(2).mean(-1)
 
-        return self.lambda_weighter(times) * error_norms
+        return self.lambda_weighter(times) * error_norms, estimated_logpt_xt
+
+    # def training_step(self, batch, batch_idx):
+    #     loss = 0.0
+    #     if not self.hparams.debug_use_train_data:
+    #         if self.hparams.use_buffer:
+    #             iter_samples, _, _ = self.buffer.sample(self.num_samples_to_sample_from_buffer)
+    #         else:
+    #             iter_samples = self.prior.sample(self.num_samples_to_sample_from_buffer)
+    #             # Uncomment for SM
+    #             # iter_samples = self.energy_function.sample_train_set(self.num_samples_to_sample_from_buffer)
+
+    #         times = torch.rand(1, device=iter_samples.device
+    #         )
+    #         noise = torch.randn_like(iter_samples)
+    #         noised_samples = iter_samples + (
+    #             noise * self.noise_schedule.h(times).sqrt().unsqueeze(-1)
+    #         )
+
+    #         if self.energy_function.is_molecule:
+    #             noised_samples = remove_mean(
+    #                 noised_samples,
+    #                 self.energy_function.n_particles,
+    #                 self.energy_function.n_spatial_dim,
+    #             )
+
+    #         xt_K = noised_samples.repeat(self.num_estimator_mc_samples, *(1,) * (noised_samples.dim() - 1))
+    #         xt0_K = xt_K + (torch.randn_like(xt_K) * self.noise_schedule.h(times).sqrt().unsqueeze(-1))
+    #         log_is_num = torch.logsumexp(self.energy_function(xt0_K).view(self.num_estimator_mc_samples, self.num_samples_to_sample_from_buffer), dim=0)
+    #         log_is_denom = (-(noise**2).sum(-1)/2)
+    #         log_is_ratio = log_is_num - log_is_denom
+    #         log_snis_ratio = log_is_ratio - log_is_ratio.logsumexp(0, keepdim=True)
+    #         snis_ratio = log_snis_ratio.exp()
+    #         snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
+    #         dem_loss = self.get_loss(times.view(-1,).repeat(self.num_samples_to_sample_from_buffer,), noised_samples)
+    #         dem_loss = (dem_loss * snis_ratio).sum(0)
+
+    #         # Uncomment for SM
+    #         # dem_loss = self.get_score_loss(times, iter_samples, noised_samples)
+    #         self.log_dict(
+    #             t_stratified_loss(times, dem_loss, loss_name="train/stratified/dem_loss")
+    #         )
+    #         dem_loss = dem_loss.mean()
+    #         loss = loss + dem_loss
+
+    #         # update and log metrics
+    #         self.dem_train_loss(dem_loss)
+    #         self.log(
+    #             "train/dem_loss",
+    #             self.dem_train_loss,
+    #             on_step=False,
+    #             on_epoch=True,
+    #             prog_bar=True,
+    #         )
+
+    #     if self.should_train_cfm(batch_idx):
+    #         if self.hparams.debug_use_train_data:
+    #             cfm_samples = self.energy_function.sample_train_set(
+    #                 self.num_samples_to_sample_from_buffer
+    #             )
+    #             times = torch.rand(
+    #                 (self.num_samples_to_sample_from_buffer,), device=cfm_samples.device
+    #             )
+    #         else:
+    #             cfm_samples, _, _ = self.buffer.sample(
+    #                 self.num_samples_to_sample_from_buffer,
+    #                 prioritize=self.prioritize_cfm_training_samples,
+    #             )
+
+    #         cfm_loss = self.get_cfm_loss(cfm_samples)
+    #         self.log_dict(
+    #             t_stratified_loss(times, cfm_loss, loss_name="train/stratified/cfm_loss")
+    #         )
+    #         cfm_loss = cfm_loss.mean()
+    #         self.cfm_train_loss(cfm_loss)
+    #         self.log(
+    #             "train/cfm_loss",
+    #             self.cfm_train_loss,
+    #             on_step=True,
+    #             on_epoch=False,
+    #             prog_bar=True,
+    #         )
+
+    #         loss = loss + self.hparams.cfm_loss_weight * cfm_loss
+
+    #     return loss
 
     def training_step(self, batch, batch_idx):
-        loss = 0.0
-        if not self.hparams.debug_use_train_data:
-            if self.hparams.use_buffer:
-                iter_samples, _, _ = self.buffer.sample(self.num_samples_to_sample_from_buffer)
-            else:
-                iter_samples = self.prior.sample(self.num_samples_to_sample_from_buffer)
-                # Uncomment for SM
-                # iter_samples = self.energy_function.sample_train_set(self.num_samples_to_sample_from_buffer)
-
-            times = torch.rand(1, device=iter_samples.device
-            )
-            noise = torch.randn_like(iter_samples)
-            noised_samples = iter_samples + (
-                noise * self.noise_schedule.h(times).sqrt().unsqueeze(-1)
-            )
-
-            if self.energy_function.is_molecule:
-                noised_samples = remove_mean(
-                    noised_samples,
-                    self.energy_function.n_particles,
-                    self.energy_function.n_spatial_dim,
-                )
-
-            xt_K = noised_samples.repeat(self.num_estimator_mc_samples, *(1,) * (noised_samples.dim() - 1))
-            xt0_K = xt_K + (torch.randn_like(xt_K) * self.noise_schedule.h(times).sqrt().unsqueeze(-1))
-            log_is_num = torch.logsumexp(self.energy_function(xt0_K).view(self.num_estimator_mc_samples, self.num_samples_to_sample_from_buffer), dim=0)
-            log_is_dom = (-(noise**2).sum(-1)/2)
-            log_is_ratio = log_is_num - log_is_dom
-            log_snis_ratio = log_is_ratio - log_is_ratio.logsumexp(0, keepdim=True)
-            snis_ratio = log_snis_ratio.exp()
-            snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
-            dem_loss = self.get_loss(times.view(-1,).repeat(self.num_samples_to_sample_from_buffer,), noised_samples)
-            dem_loss = (dem_loss * snis_ratio).sum(0)
-
-            # Uncomment for SM
-            # dem_loss = self.get_score_loss(times, iter_samples, noised_samples)
-            self.log_dict(
-                t_stratified_loss(times, dem_loss, loss_name="train/stratified/dem_loss")
-            )
-            dem_loss = dem_loss.mean()
-            loss = loss + dem_loss
-
-            # update and log metrics
-            self.dem_train_loss(dem_loss)
-            self.log(
-                "train/dem_loss",
-                self.dem_train_loss,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-            )
-
-        if self.should_train_cfm(batch_idx):
-            if self.hparams.debug_use_train_data:
-                cfm_samples = self.energy_function.sample_train_set(
-                    self.num_samples_to_sample_from_buffer
-                )
-                times = torch.rand(
-                    (self.num_samples_to_sample_from_buffer,), device=cfm_samples.device
-                )
-            else:
-                cfm_samples, _, _ = self.buffer.sample(
-                    self.num_samples_to_sample_from_buffer,
-                    prioritize=self.prioritize_cfm_training_samples,
-                )
-
-            cfm_loss = self.get_cfm_loss(cfm_samples)
-            self.log_dict(
-                t_stratified_loss(times, cfm_loss, loss_name="train/stratified/cfm_loss")
-            )
-            cfm_loss = cfm_loss.mean()
-            self.cfm_train_loss(cfm_loss)
-            self.log(
-                "train/cfm_loss",
-                self.cfm_train_loss,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-            )
-
-            loss = loss + self.hparams.cfm_loss_weight * cfm_loss
-
-        return loss
-
-    def training_step_(self, batch, batch_idx):
         loss = 0.0
         if not self.hparams.debug_use_train_data:
             if self.hparams.use_buffer:
@@ -529,10 +529,10 @@ class DEMLitModule(LightningModule):
                         self.energy_function.n_spatial_dim,
                     )
 
-                dem_loss = self.get_loss(times, noised_samples)
+                dem_loss, _ = self.get_loss(times, noised_samples)
             else:
                 # generalized fisher divergence
-                alpha = .9
+                alpha = -1
                 rand_prob = torch.rand(iter_samples.shape[0])
 
                 # select iter_samples and times w.p. to alpha
@@ -556,7 +556,7 @@ class DEMLitModule(LightningModule):
                             self.energy_function.n_spatial_dim,
                         )
 
-                    dem_loss_explore = self.get_loss(times_explore, noised_samples_explore)
+                    dem_loss_explore, _ = self.get_loss(times_explore, noised_samples_explore)
                     dem_loss[rand_prob < alpha] = dem_loss_explore
 
                 if len(iter_samples_exploit) > 0:
@@ -575,26 +575,26 @@ class DEMLitModule(LightningModule):
                             self.energy_function.n_spatial_dim,
                         )
 
-                    dem_loss_exploit = self.get_loss(repeat_times, noised_samples_exploit).view(self.num_samples_to_snis, num_samples_exploit)
+                    dem_loss_exploit, log_is_nume = self.get_loss(repeat_times, noised_samples_exploit)
+                    dem_loss_exploit = dem_loss_exploit.view(self.num_samples_to_snis, num_samples_exploit)
+                    
                     # snis correction    
-                    # numerator
-                    snis_nume_sigma = sigma.repeat(self.num_samples_to_snis_numerator, *(1,) * (sigma.dim() - 1))
-                    snis_noised_samples = noised_samples_exploit.repeat(self.num_samples_to_snis_numerator, *(1,) * (noised_samples_exploit.dim() - 1))
-                    x_0t = snis_noised_samples + (
-                        torch.randn_like(snis_noised_samples) * snis_nume_sigma.unsqueeze(-1)
-                    )
-                    log_prob = self.energy_function(x_0t).view(self.num_samples_to_snis_numerator, self.num_samples_to_snis*num_samples_exploit)
-                    log_is_nume = torch.logsumexp(log_prob, dim=0)
+                    # # numerator
+                    # snis_nume_sigma = sigma.repeat(self.num_samples_to_snis_numerator, *(1,) * (sigma.dim() - 1))
+                    # snis_noised_samples = noised_samples_exploit.repeat(self.num_samples_to_snis_numerator, *(1,) * (noised_samples_exploit.dim() - 1))
+                    # x_0t = snis_noised_samples + (
+                    #     torch.randn_like(snis_noised_samples) * snis_nume_sigma.unsqueeze(-1)
+                    # )
+                    # log_prob = self.energy_function(x_0t).view(self.num_samples_to_snis_numerator, self.num_samples_to_snis*num_samples_exploit)
+                    # log_is_nume = torch.logsumexp(log_prob, dim=0)
 
                     # donominator
-                    snis_donom_sigma = sigma.repeat(self.num_samples_to_snis_denominator, *(1,) * (sigma.dim() - 1))
+                    snis_denom_sigma = sigma.repeat(self.num_samples_to_snis_denominator, *(1,) * (sigma.dim() - 1))
                     x0, _, _ = self.buffer.sample(num_samples_exploit*self.num_samples_to_snis*self.num_samples_to_snis_denominator)
                     x0 = x0.view(self.num_samples_to_snis_denominator, *iter_samples_exploit.shape)
-                    log_is_dom = (-torch.norm(x0 - noised_samples_exploit.unsqueeze(0), dim=-1, p=2)/2/snis_donom_sigma.view(self.num_samples_to_snis_denominator, *sigma.shape)).mean(0)
+                    log_is_denom = (-torch.norm(x0 - noised_samples_exploit.unsqueeze(0), dim=-1, p=2)/2/snis_denom_sigma.view(self.num_samples_to_snis_denominator, *sigma.shape)).mean(0)
 
-                    # log_is_dom = (-(noise**2).sum(-1)/2)
-
-                    log_is_ratio = (log_is_nume - log_is_dom).view(self.num_samples_to_snis, num_samples_exploit)
+                    log_is_ratio = (log_is_nume - log_is_denom).view(self.num_samples_to_snis, num_samples_exploit)
                     log_snis_ratio = log_is_ratio - log_is_ratio.logsumexp(0, keepdim=True)
                     snis_ratio = log_snis_ratio.exp()
                     snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
@@ -791,7 +791,7 @@ class DEMLitModule(LightningModule):
 
     def _log_dist_w2(self, prefix="val"):
         if prefix == "test":
-            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
+            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
             generated_samples = self.generate_samples(
                 num_samples=self.eval_batch_size,
                 diffusion_scale=self.diffusion_scale,
@@ -800,7 +800,7 @@ class DEMLitModule(LightningModule):
         else:
             if len(self.buffer) < self.eval_batch_size:
                 return
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
+            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
             generated_samples, _ = self.buffer.get_last_n_inserted(self.eval_batch_size)
 
         dist_w2 = pot.emd2_1d(
@@ -979,7 +979,8 @@ class DEMLitModule(LightningModule):
                 self.energy_function.n_spatial_dim,
             )
 
-        loss = self.get_loss(times, noised_batch).mean(-1)
+        loss, _ = self.get_loss(times, noised_batch)
+        loss = loss.mean(-1)
 
         # update and log metrics
         loss_metric = self.val_loss if prefix == "val" else self.test_loss

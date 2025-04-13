@@ -56,3 +56,23 @@ def estimate_grad_Rt(
     vmapped_fxn = torch.vmap(grad_fxn, in_dims=(0, 0, None, None, None), randomness="different")
 
     return vmapped_fxn(t, x, energy_function, noise_schedule, num_mc_samples)
+
+
+def estimate_grad_and_value_Rt(
+    t: torch.Tensor,
+    x: torch.Tensor,
+    energy_function: BaseEnergyFunction,
+    noise_schedule: BaseNoiseSchedule,
+    num_mc_samples: int,
+):
+    if t.ndim == 0:
+        t = t.unsqueeze(0).repeat(len(x))
+    grad_and_value_fxn = torch.func.grad_and_value(log_expectation_reward, argnums=1)
+    vmapped_fxn = torch.vmap(
+        grad_and_value_fxn, 
+        in_dims=(0, 0, None, None, None), 
+        randomness="different"
+    )
+    grads, values = vmapped_fxn(t, x, energy_function, noise_schedule, num_mc_samples)
+    return values, grads
+   
