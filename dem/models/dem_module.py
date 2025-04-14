@@ -765,7 +765,7 @@ class DEMLitModule(LightningModule):
 
     def _log_energy_w2(self, prefix="val"):
         if prefix == "test":
-            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
+            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
             generated_samples = self.generate_samples(
                 num_samples=self.eval_batch_size,
                 diffusion_scale=self.diffusion_scale,
@@ -775,7 +775,7 @@ class DEMLitModule(LightningModule):
         else:
             if len(self.buffer) < self.eval_batch_size:
                 return
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
+            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
             _, generated_energies = self.buffer.get_last_n_inserted(self.eval_batch_size)
 
         energies = self.energy_function(self.energy_function.normalize(data_set))
@@ -817,7 +817,7 @@ class DEMLitModule(LightningModule):
 
     def _log_dist_total_var(self, prefix="val"):
         if prefix == "test":
-            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
+            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
             generated_samples = self.generate_samples(
                 num_samples=self.eval_batch_size,
                 diffusion_scale=self.diffusion_scale,
@@ -826,7 +826,7 @@ class DEMLitModule(LightningModule):
         else:
             if len(self.buffer) < self.eval_batch_size:
                 return
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
+            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
             generated_samples, _ = self.buffer.get_last_n_inserted(self.eval_batch_size)
 
         total_var = self._compute_total_var(generated_samples, data_set)
