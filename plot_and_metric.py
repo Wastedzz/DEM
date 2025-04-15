@@ -11,13 +11,31 @@ import os
 import matplotlib.pyplot as plt
 
 
+def compute_gaussian_tvd(samples1, samples_test, bins=200):
+    
+    H_data, x_edges, y_edges = np.histogram2d(
+        samples_test[:, 0], samples_test[:, 1], bins=bins
+    )
+    H_gen, _, _ = np.histogram2d(
+        samples1[:, 0], samples1[:, 1], bins=[x_edges, y_edges]
+    )
+    H_data_norm = H_data / H_data.sum()
+    H_gen_norm = H_gen / H_gen.sum()
+    total_var = 0.5 * np.abs(H_data_norm - H_gen_norm).sum()
+    return total_var
 
-def compute_total_var(energy_function, generated_samples, data_set):
+
+def compute_symmetric_gaussian_tvd(samples1, samples_test, bins=200):
+    tvd1 = compute_gaussian_tvd(samples1, samples_test, bins)
+    tvd2 = compute_gaussian_tvd(samples_test, samples1, bins)
+    return (tvd1 + tvd2) / 2
+
+
+def compute_total_var_dist(energy_function, generated_samples, data_set):
     generated_samples_dists = (
         energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1),
     )
     data_set_dists = energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1)
-
     H_data_set, x_data_set = np.histogram(data_set_dists, bins=200)
     H_generated_samples, _ = np.histogram(generated_samples_dists, bins=(x_data_set))
     total_var = (
@@ -26,7 +44,6 @@ def compute_total_var(energy_function, generated_samples, data_set):
             H_data_set / H_data_set.sum() - H_generated_samples / H_generated_samples.sum()
         ).sum()
     )
-
     return total_var
 
 
@@ -34,10 +51,11 @@ def get_all_metric(energy_func, generated_samples):
     test_set = energy_func.sample_test_set(-1, full=True)
     # compute the total variation distance
     try:
-        total_var = compute_total_var(energy_func, generated_samples, test_set)
+        total_var = compute_total_var_dist(energy_func, generated_samples, test_set)
         metric_dict = {'tv': total_var}
     except:
-        metric_dict = {}
+        total_var = compute_symmetric_gaussian_tvd(generated_samples, test_set)
+        metric_dict = {'tv': total_var}
     idx = torch.randperm(len(generated_samples))[:10000]
     names, dists = compute_full_dataset_distribution_distances(
         energy_func.unnormalize(generated_samples)[idx, None],
@@ -46,7 +64,6 @@ def get_all_metric(energy_func, generated_samples):
     )
     for name, dist in zip(names, dists):
         metric_dict[name] = dist
-
     return metric_dict
 
 if __name__=='__main__':
