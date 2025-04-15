@@ -217,7 +217,7 @@ class MultiDoubleWellEnergy(BaseEnergyFunction):
             linewidth=4,
         )
         axs[0].set_xlabel("Interatomic distance")
-        axs[0].legend(["generated data", "test data"])
+        axs[0].legend(["Generated Data", "Ground Truth"])
 
         energy_samples = -self(samples).detach().detach().cpu()
         energy_test = -self(test_data_smaller).detach().detach().cpu()
@@ -234,7 +234,7 @@ class MultiDoubleWellEnergy(BaseEnergyFunction):
             color="g",
             histtype="step",
             linewidth=4,
-            label="test data",
+            label="Ground Truth",
         )
         axs[1].hist(
             energy_samples.cpu(),
@@ -245,7 +245,7 @@ class MultiDoubleWellEnergy(BaseEnergyFunction):
             color="r",
             histtype="step",
             linewidth=4,
-            label="generated data",
+            label="Generated Data",
         )
         axs[1].set_xlabel("Energy")
         axs[1].legend()
