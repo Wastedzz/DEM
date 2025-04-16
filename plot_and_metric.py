@@ -51,10 +51,10 @@ def get_all_metric(energy_func, generated_samples):
     test_set = energy_func.sample_test_set(-1, full=True)
     # compute the total variation distance
     try:
-        total_var = compute_total_var_dist(energy_func, generated_samples, test_set)
+        total_var = compute_total_var_dist(energy_func, energy_func.unnormalize(generated_samples), test_set)
         metric_dict = {'tv': total_var}
     except:
-        total_var = compute_symmetric_gaussian_tvd(generated_samples, test_set)
+        total_var = compute_symmetric_gaussian_tvd(energy_func.unnormalize(generated_samples), test_set)
         metric_dict = {'tv': total_var}
     idx = torch.randperm(len(generated_samples))[:10000]
     names, dists = compute_full_dataset_distribution_distances(
@@ -82,8 +82,8 @@ if __name__=='__main__':
     else:
         os.makedirs(base_dir)
 
-    if not os.path.exists(base_dir):
-        os.makedirs(base_dir)
+    # if not os.path.exists(base_dir):
+    #     os.makedirs(base_dir)
     
     if args.target == 'mog':
         energy = GMM()
