@@ -144,11 +144,12 @@ if __name__=='__main__':
     samples = torch.load(args.sample_path+'/samples_100000.pt',weights_only=True).cpu()
     bins = int(np.sqrt(len(energy._test_set)))
     samples = samples.to(torch.float32)
-    valid_mask = ~torch.isnan(samples).any(dim=1) & ~torch.isinf(samples).any(dim=1)
-    samples = samples[valid_mask]
-    samples = torch.clamp(samples, 
-                                -energy.data_normalization_factor, 
-                                energy.data_normalization_factor)
+    if target_type == 'mog':
+        valid_mask = ~torch.isnan(samples).any(dim=1) & ~torch.isinf(samples).any(dim=1)
+        samples = samples[valid_mask]
+        samples = torch.clamp(samples, 
+                                    -energy.data_normalization_factor, 
+                                    energy.data_normalization_factor)
 
     if args.normalize_sample:
         samples = energy.normalize(samples)
