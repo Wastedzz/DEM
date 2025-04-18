@@ -1,5 +1,9 @@
 _target_: dem.models.pis_module.PISLitModule
 
+nll_integration_method: dopri5
+use_richardsons: false
+logz_with_cfm: false
+
 optimizer:
   _target_: torch.optim.Adam
   _partial_: true
@@ -13,13 +17,13 @@ scheduler:
   factor: 0.1
   patience: 10
 
-net:
-  _target_: dem.models.components.mlp.FourierMLP
-  _partial_: true
-  num_layers: 2
-  channels: 64
-  in_shape: ${energy.dimensionality}
-  out_shape: ${energy.dimensionality}
+# net:
+#   _target_: dem.models.components.mlp.FourierMLP
+#   _partial_: true
+#   num_layers: 2
+#   channels: 64
+#   in_shape: ${energy.dimensionality}
+#   out_shape: ${energy.dimensionality}
 
 tnet:
   _target_: dem.models.components.mlp.TimeConder
@@ -29,6 +33,8 @@ tnet:
   num_layers: 3
 
 defaults:
+  - net:
+      - pis_mlp
   - noise_schedule:
       - geometric
 
@@ -53,7 +59,7 @@ eval_batch_size: 1024
 
 num_integration_steps: 100
 
-nll_with_cfm: true
+nll_with_cfm: false
 cfm_sigma: 0.0
 cfm_prior_std: ${energy.data_normalization_factor}
 prioritize_cfm_training_samples: false

@@ -437,6 +437,7 @@ class PISLitModule(LightningModule):
             sde or self.pis_sde,
             samples,
             self.num_integration_steps,
+            self.energy_function,
             diffusion_scale=diffusion_scale,
             reverse_time=reverse_time,
             no_grad=no_grad,
@@ -767,7 +768,8 @@ class PISLitModule(LightningModule):
         self.energy_function.log_samples(
             buffer_samples, wandb_logger, f"{prefix}_samples/buffer_samples"
         )
-
+        
+        
         if self.nll_with_cfm:
             # Generate data from the CFM
             # Calculate logZ based on that data
@@ -790,13 +792,20 @@ class PISLitModule(LightningModule):
 
         # pad with time dimension 1
         names, dists = compute_distribution_distances(
-            self.outputs[f"{prefix}/gen"][:, None], self.outputs[f"{prefix}/data"][:, None]
+            self.energy_function.unnormalize(self.outputs[f"{prefix}/gen"])[:, None],
+            self.outputs[f"{prefix}/data"][:, None],
+            self.energy_function,
         )
+        # names, dists = compute_distribution_distances(
+        #     self.outputs[f"{prefix}/gen"][:, None], self.outputs[f"{prefix}/data"][:, None]
+        # )
         names = [f"{prefix}/{name}" for name in names]
         d = dict(zip(names, dists))
         metrics.update(d)
         self.log_dict(metrics, sync_dist=True)
         self.outputs = {}
+
+
 
     def on_validation_epoch_end(self) -> None:
         self.eval_epoch_end("val")
@@ -813,6 +822,8 @@ class PISLitModule(LightningModule):
 
         :param stage: Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
         """
+        self.buffer.initialize(self.device)
+        self.energy_function.to(self.device)
 
         self.prior = self.partial_prior(
             device=self.device, scale=self.pis_scale * np.sqrt(self.time_range)
