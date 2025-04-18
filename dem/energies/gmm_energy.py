@@ -74,9 +74,9 @@ class GMM(BaseEnergyFunction):
             self._train_set = self._train_set.to(device) if self._train_set is not None else None
 
     def setup_test_set(self):
-        # test_sample = self.gmm.sample((self.test_set_size,))
-        # return test_sample
-        return self.gmm.test_set
+        test_sample = self.gmm.sample((self.test_set_size,))
+        return test_sample
+        # return self.gmm.test_set
 
     def setup_train_set(self):
         if self.data_path_train is None:

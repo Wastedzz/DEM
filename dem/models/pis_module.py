@@ -30,6 +30,7 @@ from .components.score_estimator import estimate_grad_Rt
 from .components.score_scaler import BaseScoreScaler
 from .components.sde_integration import integrate_sde
 from .components.sdes import SDE
+import hydra
 
 logtwopi = math.log(2 * math.pi)
 
@@ -118,6 +119,7 @@ class PISLitModule(LightningModule):
         eval_batch_size: int,
         num_samples_to_sample_from_buffer: int,
         num_integration_steps: int,
+        num_samples_to_save:int,
         lr_scheduler_update_frequency: int,
         nll_with_cfm: bool,
         cfm_sigma: float,
@@ -222,6 +224,7 @@ class PISLitModule(LightningModule):
         self.clipper_gen = clipper_gen
         self.compute_nll_on_train_data = compute_nll_on_train_data
         self.num_negative_time_steps = num_negative_time_steps
+        self.num_samples_to_save=num_samples_to_save
         
         self.outputs = {}
 
@@ -587,13 +590,14 @@ class PISLitModule(LightningModule):
         )
         return forwards_samples
 
-    def pis_logZ(self):
+    def pis_logZ(self, num_samples: Optional[int] = None):
+        num_samples = num_samples if num_samples is not None else self.eval_batch_size
         times = torch.linspace(0.0, self.time_range, self.num_integration_steps + 1).to(
             self.device
         )[:-1]
         uw_term = 0
         dt = 1.0 / self.num_integration_steps
-        state = torch.zeros(self.eval_batch_size, self.dim + 1).to(self.device)
+        state = torch.zeros(num_samples, self.dim + 1).to(self.device)
         for t in times:
             state, cur_uw_term = self.step_with_uw(t, state, dt)
             uw_term += cur_uw_term
@@ -763,8 +767,11 @@ class PISLitModule(LightningModule):
         wandb_logger = get_wandb_logger(self.loggers)
 
         samples_gfn, gfn_logZ, logZ_lb = self.gfn_log_Z()
-        samples_pis, pis_logZ_lb, pis_logZ_ub, pis_logZ_hb, pis_logZ = self.pis_logZ()
+        samples_pis, pis_logZ_lb, pis_logZ_ub, pis_logZ_hb, pis_logZ = self.pis_logZ(self.num_samples_to_save)
         buffer_samples, _, _ = self.buffer.sample(self.eval_batch_size)
+        output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+        path = f"{output_dir}/samples_{self.num_samples_to_save}.pt"
+        torch.save(samples_pis, path)
 
         metrics = {
             f"{prefix}/gfn_logZ": gfn_logZ,

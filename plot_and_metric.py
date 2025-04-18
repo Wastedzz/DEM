@@ -11,34 +11,28 @@ import os
 import matplotlib.pyplot as plt
 
 
-# def compute_gaussian_tvd(samples1, samples_test, bins=200):
+def compute_gaussian_tvd(samples1, samples_test, bins):
     
-#     H_data, x_edges, y_edges = np.histogram2d(
-#         samples_test[:, 0], samples_test[:, 1], bins=bins
-#     )
-#     H_gen, _, _ = np.histogram2d(
-#         samples1[:, 0], samples1[:, 1], bins=[x_edges, y_edges]
-#     )
-#     H_data_norm = H_data / H_data.sum()
-#     H_gen_norm = H_gen / H_gen.sum()
-#     total_var = 0.5 * np.abs(H_data_norm - H_gen_norm).sum()
-#     return total_var
+    H_data, x_edges, y_edges = np.histogram2d(
+        samples_test[:, 0], samples_test[:, 1], bins=bins
+    )
+    H_gen, _, _ = np.histogram2d(
+        samples1[:, 0], samples1[:, 1], bins=[x_edges, y_edges]
+    )
+    H_data_norm = H_data / H_data.sum()
+    H_gen_norm = H_gen / H_gen.sum()
+    total_var = 0.5 * np.abs(H_data_norm - H_gen_norm).sum()
+    return total_var
 
 
-# def compute_symmetric_gaussian_tvd(samples1, samples_test, bins=200):
-#     tvd1 = compute_gaussian_tvd(samples1, samples_test, bins)
-#     tvd2 = compute_gaussian_tvd(samples_test, samples1, bins)
-#     return (tvd1 + tvd2) / 2
 
-
-def compute_total_var_energy(energy_function, generated_samples, data_set):
+def compute_total_var_energy(energy_function, generated_samples, data_set, bins):
     generated_samples_energy = (
         energy_function(generated_samples).cpu().numpy().reshape(-1),
     )
     data_set_energy = energy_function(data_set).cpu().numpy().reshape(-1)
     
-    
-    H_data_set, x_data_set = np.histogram(generated_samples_energy, bins=200)
+    H_data_set, x_data_set = np.histogram(generated_samples_energy, bins=bins)
     H_generated_samples, _ = np.histogram(data_set_energy, bins=(x_data_set))
     total_var = (
         0.5
@@ -49,12 +43,12 @@ def compute_total_var_energy(energy_function, generated_samples, data_set):
     return total_var
 
 
-def compute_total_var_dist(energy_function, generated_samples, data_set):
+def compute_total_var_dist(energy_function, generated_samples, data_set, bins):
     generated_samples_dists = (
         energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1),
     )
     data_set_dists = energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1)
-    H_data_set, x_data_set = np.histogram(data_set_dists, bins=200)
+    H_data_set, x_data_set = np.histogram(data_set_dists, bins=bins)
     H_generated_samples, _ = np.histogram(generated_samples_dists, bins=(x_data_set))
     total_var = (
         0.5
@@ -64,18 +58,25 @@ def compute_total_var_dist(energy_function, generated_samples, data_set):
     )
     return total_var
 
-
-def get_all_metric(energy_func, generated_samples):
+def get_all_metric(energy_func, generated_samples, bins=200):
     test_set = energy_func.sample_test_set(-1, full=True)
     # compute the total variation distance
-    try:
-        total_var = compute_total_var_dist(energy_func, energy_func.unnormalize(generated_samples), test_set)
+    if energy_func.name=='gmm':
+        total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+        metric_dict = {'tv_energy': total_var}
+        
+        total_val = compute_gaussian_tvd(
+            energy_func.unnormalize(generated_samples),
+            test_set,
+            bins
+        )
+        metric_dict['tv_sample'] = total_val
+    else:
+        total_var = compute_total_var_dist(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
         metric_dict = {'tv_dist': total_var}
-        total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set)
-        metric_dict = {'tv_energy': total_var}
-    except:
-        total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set)
-        metric_dict = {'tv_energy': total_var}
+        total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+        metric_dict['tv_energy'] = total_var
+        
     idx = torch.randperm(len(generated_samples))[:10000]
     names, dists = compute_full_dataset_distribution_distances(
         energy_func.unnormalize(generated_samples)[idx, None],
@@ -106,7 +107,7 @@ if __name__=='__main__':
         os.makedirs(base_dir)
     
     if args.target == 'mog':
-        energy = GMM()
+        energy = GMM(test_set_size=10000)
         plotting_bounds = (-1.4 * 40, 1.4 * 40)
         target_type = 'mog'
     elif args.target =='mog80':
@@ -115,7 +116,7 @@ if __name__=='__main__':
         n_mixes=80,
         loc_scaling=80,
         data_normalization_factor=100,
-        test_set_size=2000)
+        test_set_size=10000)
         plotting_bounds = (-1.4 * 80, 1.4 * 80)
         target_type = 'mog'
     elif args.target == 'mog120':
@@ -124,7 +125,7 @@ if __name__=='__main__':
         n_mixes=120,
         loc_scaling=120,
         data_normalization_factor=150,
-        test_set_size=3000)
+        test_set_size=10000)
         plotting_bounds = (-1.4 * 120, 1.4 * 120)
         target_type = 'mog'
     elif args.target == 'dw':
@@ -139,10 +140,18 @@ if __name__=='__main__':
     else:
         raise NotImplementedError(f"Target {args.target} not implemented")
     
+
+    samples = torch.load(args.sample_path+'/samples_100000.pt',weights_only=True).cpu()
+    bins = int(np.sqrt(len(energy._test_set)))
+    samples = samples.to(torch.float32)
+    valid_mask = ~torch.isnan(samples).any(dim=1) & ~torch.isinf(samples).any(dim=1)
+    samples = samples[valid_mask]
+    samples = torch.clamp(samples, 
+                                -energy.data_normalization_factor, 
+                                energy.data_normalization_factor)
+
     if args.normalize_sample:
-        samples = energy.normalize(torch.load(args.sample_path+'/samples_100000.pt')).cpu()
-    else:
-        samples = torch.load(args.sample_path+'/samples_100000.pt').cpu()
+        samples = energy.normalize(samples)
     
     sampled_samples = samples[torch.randint(0, len(samples), (len(energy._test_set),))]
     if target_type == 'mog':
@@ -153,7 +162,7 @@ if __name__=='__main__':
     elif target_type == 'dw':
         energy.get_dataset_fig(energy.unnormalize(sampled_samples))
         plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
-    all_metric = get_all_metric(energy, samples)
+    all_metric = get_all_metric(energy, samples, bins)
     # save the metrics
     with open(base_dir + '/metrics.pkl', 'wb') as f:
         pickle.dump(all_metric, f)
