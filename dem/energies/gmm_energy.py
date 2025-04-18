@@ -189,8 +189,10 @@ class GMM(BaseEnergyFunction):
         )
 
         plot_marginal_pair(samples, ax=ax, bounds=plotting_bounds)
-        ax.set_title(f"{name}")
-
+        # ax.set_title(f"{name}")
+        plt.xticks([])
+        plt.yticks([])
+        plt.tight_layout()
         self.gmm.to(self.device)
 
         return fig_to_image(fig)

@@ -16,6 +16,7 @@ from torchmetrics import MeanMetric
 
 from dem.energies.base_energy_function import BaseEnergyFunction
 from dem.utils.logging_utils import fig_to_image
+from dem.utils.data_utils import remove_mean
 
 from .components.clipper import Clipper
 from .components.cnf import CNF
@@ -142,6 +143,7 @@ class PISLitModule(LightningModule):
         debug_use_train_data=False,
         init_from_prior=False,
         compute_nll_on_train_data=False,
+        num_negative_time_steps=100,
         use_otcfm=False,
     ) -> None:
         """Initialize a `MNISTLitModule`.
@@ -219,7 +221,8 @@ class PISLitModule(LightningModule):
         self.partial_prior = partial_prior
         self.clipper_gen = clipper_gen
         self.compute_nll_on_train_data = compute_nll_on_train_data
-
+        self.num_negative_time_steps = num_negative_time_steps
+        
         self.outputs = {}
 
         self.pis_train_loss = MeanMetric()
@@ -386,7 +389,6 @@ class PISLitModule(LightningModule):
         aug_prior_samples = torch.zeros(
             self.num_samples_to_sample_from_buffer, self.dim + 1, device=self.device
         )
-
         aug_output = self.integrate(
             self.pis_sde,
             aug_prior_samples,
@@ -396,6 +398,13 @@ class PISLitModule(LightningModule):
             time_range=self.time_range,
         )[-1]
         x_1, quad_reg = aug_output[..., :-1], aug_output[..., -1]
+        if self.energy_function.is_molecule:
+            x_1 = remove_mean(
+                x_1,
+                self.energy_function.n_particles,
+                self.energy_function.n_spatial_dim,
+            )        
+
         prior_ll = self.prior.log_prob(x_1).mean() / (self.dim + 1)
         sample_ll = self.energy_function(x_1).mean() / (self.dim + 1)
         term_loss = prior_ll - sample_ll
@@ -410,6 +419,7 @@ class PISLitModule(LightningModule):
         num_samples: Optional[int] = None,
         return_full_trajectory: bool = False,
         diffusion_scale=1.0,
+        negative_time=False,
     ) -> torch.Tensor:
         num_samples = num_samples or self.num_samples_to_generate_per_epoch
         samples = torch.zeros(num_samples, self.dim + 1, device=self.device)
@@ -421,6 +431,8 @@ class PISLitModule(LightningModule):
             return_full_trajectory=return_full_trajectory,
             diffusion_scale=diffusion_scale,
             time_range=self.time_range,
+            negative_time=negative_time,
+
         )[..., :-1]
 
     def integrate(
@@ -432,6 +444,7 @@ class PISLitModule(LightningModule):
         diffusion_scale=1.0,
         no_grad=True,
         time_range=1.0,
+        negative_time=False,
     ) -> torch.Tensor:
         trajectory = integrate_sde(
             sde or self.pis_sde,
@@ -442,6 +455,9 @@ class PISLitModule(LightningModule):
             reverse_time=reverse_time,
             no_grad=no_grad,
             time_range=time_range,
+            negative_time=negative_time,
+            num_negative_time_steps=self.num_negative_time_steps,
+            clipper=self.clipper,
         )
         if return_full_trajectory:
             return trajectory
