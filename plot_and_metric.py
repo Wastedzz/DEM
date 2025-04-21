@@ -5,6 +5,7 @@ from dem.models.components.distribution_distances import (
 )
 from dem.energies.gmm_energy import GMM
 from dem.energies.multi_double_well_energy import MultiDoubleWellEnergy
+from dem.energies.lennardjones_energy import LennardJonesEnergy
 import pickle
 import argparse
 import os
@@ -97,14 +98,20 @@ if __name__=='__main__':
     args = parser.parse_args()
     
     base_dir = './saved_metrics_figs/'+args.save_des
-    # if os.path.exists(base_dir):
-    #     print(f"Directory {base_dir} already exists. Please choose a different name.")
-    #     exit(1)
-    # else:
-    #     os.makedirs(base_dir)
+    if os.path.exists(base_dir):
+        original_base_dir = base_dir
+        repeat_counter = 1
+        
+        while True:
+            new_dir = f"{original_base_dir}_repeat_{repeat_counter}"
+            if not os.path.exists(new_dir):
+                base_dir = new_dir
+                break
+            repeat_counter += 1
+        
+        print(f"Directory {original_base_dir} already exists. Creating {base_dir} instead.")
 
-    if not os.path.exists(base_dir):
-        os.makedirs(base_dir)
+    os.makedirs(base_dir)
     
     if args.target == 'mog':
         energy = GMM(test_set_size=10000)
@@ -136,6 +143,26 @@ if __name__=='__main__':
         data_path_train="data/train_split_DW4.npy",
         data_path_val="data/val_split_DW4.npy",)
         target_type = 'dw'
+    elif args.target == 'lj13':
+        energy = LennardJonesEnergy(
+        dimensionality=39,
+        n_particles=13,
+        data_path="data/test_split_LJ13-1000.npy",
+        data_path_train="data/train_split_LJ13-1000.npy",
+        data_path_val="data/val_split_LJ13-1000.npy",
+        data_path_test="data/test_split_LJ13-1000.npy",
+        )
+        target_type = 'lj13'
+    elif args.target == 'lj13_55':
+        energy = LennardJonesEnergy(
+        dimensionality=165,
+        n_particles=55,
+        data_path="data/test_split_LJ55-1000-part1.npy",
+        data_path_train="data/train_split_LJ55-1000-part1.npy",
+        data_path_val="data/val_split_LJ55-1000-part1.npy",
+        data_path_test="data/test_split_LJ55-1000-part1.npy"
+        )
+        target_type = 'lj55'
         
     else:
         raise NotImplementedError(f"Target {args.target} not implemented")
@@ -160,7 +187,8 @@ if __name__=='__main__':
         plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
         energy.get_single_dataset_fig(energy._test_set, '',plotting_bounds=plotting_bounds)
         plt.savefig(base_dir + '/gt.pdf')
-    elif target_type == 'dw':
+    # elif target_type == 'dw':
+    else:
         energy.get_dataset_fig(energy.unnormalize(sampled_samples))
         plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
     all_metric = get_all_metric(energy, samples, bins)
