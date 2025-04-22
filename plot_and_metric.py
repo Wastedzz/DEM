@@ -153,7 +153,7 @@ if __name__=='__main__':
         data_path_test="data/test_split_LJ13-1000.npy",
         )
         target_type = 'lj13'
-    elif args.target == 'lj13_55':
+    elif args.target == 'lj55':
         energy = LennardJonesEnergy(
         dimensionality=165,
         n_particles=55,
@@ -167,8 +167,8 @@ if __name__=='__main__':
     else:
         raise NotImplementedError(f"Target {args.target} not implemented")
     
+    samples = torch.load(args.sample_path,weights_only=True).cpu()
 
-    samples = torch.load(args.sample_path+'/samples_100000.pt',weights_only=True).cpu()
     bins = int(np.sqrt(len(energy._test_set)))
     samples = samples.to(torch.float32)
     if target_type == 'mog':
@@ -192,6 +192,12 @@ if __name__=='__main__':
         energy.get_dataset_fig(energy.unnormalize(sampled_samples))
         plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
     all_metric = get_all_metric(energy, samples, bins)
+    # beautifully print all_metric, only contains: 'tv' or 'Wassertein'
+    print('Metrics:')
+    for key, value in all_metric.items():
+        if key.startswith('tv') or key.endswith('Wasserstein'):
+            print(f"{key}: {value:.4f}")
+    
     # save the metrics
     with open(base_dir + '/metrics.pkl', 'wb') as f:
         pickle.dump(all_metric, f)

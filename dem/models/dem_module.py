@@ -844,8 +844,8 @@ class DEMLitModule(LightningModule):
             self.energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1),
         )
         data_set_dists = self.energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1)
-
-        H_data_set, x_data_set = np.histogram(data_set_dists, bins=200)
+        bins = int(np.sqrt(len(data_set)))
+        H_data_set, x_data_set = np.histogram(data_set_dists, bins=bins)
         H_generated_samples, _ = np.histogram(generated_samples_dists, bins=(x_data_set))
         total_var = (
             0.5

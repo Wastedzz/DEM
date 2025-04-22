@@ -14,6 +14,59 @@ from dem.models.components.replay_buffer import ReplayBuffer
 from dem.utils.data_utils import remove_mean
 
 
+class Energy():
+    def __init__(self, dim):
+        super().__init__()
+        self._dim = dim
+        
+    @property
+    def dim(self):
+        return self._dim
+    
+    def _energy(self, x):
+        raise NotImplementedError()
+        
+    def energy(self, x, temperature=None):
+        #assert x.shape[-1] == self._dim, "`x` does not match `dim`"
+        if temperature is None:
+            temperature = 1.
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+        return self._energy(x) / temperature
+    
+
+
+class DoubleWellEnergy(Energy):
+    def __init__(self, dim=2, a=-0.5, b=-6.0, c=1.0, k=1.0):
+        super().__init__(dim)
+        self._a = a
+        self._b = b
+        self._c = c
+        self._k = k
+    
+    def _energy(self, x):
+        d = x[..., 0:1]
+        v = x[..., 1:]
+        e1 = self._a * d + self._b * (d**2) + self._c * (d**4)
+        e2 = torch.sum(0.5 * self._k * (v**2), dim=-1, keepdim=True)
+        return e1 + e2
+   
+    @property
+    def log_Z(self):
+        if self._a == -0.5 and self._b == -6.0 and self._c == 1.0 and self._k == 1.0:
+            log_Z_dim0 = np.log(11784.50927)
+            log_Z_dim1 = 0.5 * np.log(2 * torch.pi)
+            return log_Z_dim0 + log_Z_dim1
+        else:
+            raise NotImplementedError
+        
+    def log_prob(self, x):
+        if self._a == -0.5 and self._b == -6.0 and self._c == 1.0 and self._k == 1.0:
+            return -self.energy(x).squeeze(-1) - self.log_Z
+        else:
+            raise NotImplementedError
+
+
 class ManyWellEnergy(BaseEnergyFunction):
     def __init__(
         self,
@@ -27,7 +80,7 @@ class ManyWellEnergy(BaseEnergyFunction):
         plot_samples_epoch_period=5,
         plotting_buffer_sample_size=512,
         data_normalization_factor=1.0,
-        is_molecule=True,
+        is_molecule=False,
     ):
         self.n_particles = n_particles
         self.n_spatial_dim = dimensionality // n_particles
@@ -37,19 +90,6 @@ class ManyWellEnergy(BaseEnergyFunction):
         self.plot_samples_epoch_period = plot_samples_epoch_period
 
         self.data_normalization_factor = data_normalization_factor
-
-        self.data_from_efm = data_from_efm
-
-        if data_from_efm:
-            self.name = "DW4_EFM"
-        else:
-            self.name = "DW4_EACF"
-
-        if self.data_from_efm:
-            if data_path_train is None:
-                raise ValueError("DW4 is from EFM. No train data path provided")
-            if data_path_val is None:
-                raise ValueError("DW4 is from EFM. No val data path provided")
 
         # self.data_path = get_original_cwd() + "/" + data_path
         # self.data_path_train = get_original_cwd() + "/" + data_path_train
@@ -65,15 +105,8 @@ class ManyWellEnergy(BaseEnergyFunction):
         self.test_set_size = 1000
         self.train_set_size = 100000
 
-        self.multi_double_well = MultiDoubleWellPotential(
-            dim=dimensionality,
-            n_particles=n_particles,
-            a=0.9,
-            b=-4,
-            c=0,
-            offset=4,
-            two_event_dims=False,
-        )
+        self.double_well = DoubleWellEnergy(dim=2, a=-0.5, b=-6, c=1, k=1)
+
 
         super().__init__(dimensionality=dimensionality, is_molecule=is_molecule)
 
@@ -99,7 +132,7 @@ class ManyWellEnergy(BaseEnergyFunction):
             data = all_data[0][-self.test_set_size :]
             del all_data
 
-        data = remove_mean(torch.tensor(data), self.n_particles, self.n_spatial_dim).to(
+        data = torch.tensor(data).to(
             self.device
         )
 
@@ -114,7 +147,7 @@ class ManyWellEnergy(BaseEnergyFunction):
             data = all_data[0][: self.train_set_size]
             del all_data
 
-        data = remove_mean(torch.tensor(data), self.n_particles, self.n_spatial_dim).to(
+        data = torch.tensor(data).to(
             self.device
         )
 
@@ -129,7 +162,7 @@ class ManyWellEnergy(BaseEnergyFunction):
             data = all_data[0][-self.test_set_size - self.val_set_size : -self.test_set_size]
             del all_data
 
-        data = remove_mean(torch.tensor(data), self.n_particles, self.n_spatial_dim).to(
+        data = torch.tensor(data).to(
             self.device
         )
         return data
@@ -249,6 +282,7 @@ class ManyWellEnergy(BaseEnergyFunction):
         )
         axs[1].set_xlabel("Energy")
         axs[1].legend()
+        
 
         try:
             buffer = BytesIO()
