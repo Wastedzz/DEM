@@ -204,7 +204,7 @@ if __name__=='__main__':
     
     sampled_samples = samples[torch.randint(0, len(samples), (len(energy._test_set),))]
     
-    if args.update_metric is not None:
+    if args.update_metric is None:
         if target_type == 'mog':
             energy.get_single_dataset_fig(energy.unnormalize(sampled_samples), '', plotting_bounds=plotting_bounds)
             plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
