@@ -90,15 +90,7 @@ def compute_distribution_distances(
 
 
 def compute_full_dataset_distribution_distances(
-    pred: torch.Tensor, true: Union[torch.Tensor, list], energy_function
-):
-    """computes distances between distributions.
-    pred: [batch, times, dims] tensor
-    true: [batch, times, dims] tensor or list[batch[i], dims] of length times
-
-    This handles jagged times as a list of tensors.
-    """
-    NAMES = [
+    pred: torch.Tensor, true: Union[torch.Tensor, list], energy_function, NAMES = [
         "1-Wasserstein",
         "2-Wasserstein",
         "Mean_MSE",
@@ -108,6 +100,13 @@ def compute_full_dataset_distribution_distances(
         "Median_L2",
         "Median_L1",
     ]
+):
+    """computes distances between distributions.
+    pred: [batch, times, dims] tensor
+    true: [batch, times, dims] tensor or list[batch[i], dims] of length times
+
+    This handles jagged times as a list of tensors.
+    """
     is_jagged = isinstance(true, list)
     pred_is_jagged = isinstance(pred, list)
     dists = []

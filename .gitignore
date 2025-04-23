@@ -149,6 +149,10 @@ dmypy.json
 *.h5
 *.tar
 *.tar.gz
+*.pdf
+*.pkl
+*.ipynb
+*.pt
 
 # Lightning-Hydra-Template
 configs/local/default.yaml

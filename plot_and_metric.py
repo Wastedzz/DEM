@@ -28,13 +28,12 @@ def compute_gaussian_tvd(samples1, samples_test, bins):
 
 
 def compute_total_var_energy(energy_function, generated_samples, data_set, bins):
-    generated_samples_energy = (
-        energy_function(generated_samples).cpu().numpy().reshape(-1),
-    )
+    generated_samples_energy = energy_function(generated_samples).cpu().numpy().reshape(-1)
+    
     data_set_energy = energy_function(data_set).cpu().numpy().reshape(-1)
     
-    H_data_set, x_data_set = np.histogram(generated_samples_energy, bins=bins)
-    H_generated_samples, _ = np.histogram(data_set_energy, bins=(x_data_set))
+    H_data_set, x_data_set = np.histogram(data_set_energy, bins=bins)
+    H_generated_samples, _ = np.histogram(generated_samples_energy, bins=(x_data_set))
     total_var = (
         0.5
         * np.abs(
@@ -45,9 +44,7 @@ def compute_total_var_energy(energy_function, generated_samples, data_set, bins)
 
 
 def compute_total_var_dist(energy_function, generated_samples, data_set, bins):
-    generated_samples_dists = (
-        energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1),
-    )
+    generated_samples_dists = energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1)
     data_set_dists = energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1)
     H_data_set, x_data_set = np.histogram(data_set_dists, bins=bins)
     H_generated_samples, _ = np.histogram(generated_samples_dists, bins=(x_data_set))
@@ -59,33 +56,49 @@ def compute_total_var_dist(energy_function, generated_samples, data_set, bins):
     )
     return total_var
 
-def get_all_metric(energy_func, generated_samples, bins=200):
+def get_all_metric(energy_func, generated_samples, bins, metric_dict, update_metric):
     test_set = energy_func.sample_test_set(-1, full=True)
-    # compute the total variation distance
-    if energy_func.name=='gmm':
-        total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
-        metric_dict = {'tv_energy': total_var}
-        
-        total_val = compute_gaussian_tvd(
-            energy_func.unnormalize(generated_samples),
-            test_set,
-            bins
-        )
-        metric_dict['tv_sample'] = total_val
+
+    # 'tv_energy', 'tv_dist', 'tv_sample'
+    if update_metric is not None:
+        if update_metric == 'tv_energy':
+            metric_dict[update_metric] = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+        elif update_metric == 'tv_dist':
+            metric_dict[update_metric] = compute_total_var_dist(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+        elif update_metric == 'tv_sample':
+            metric_dict[update_metric] = compute_gaussian_tvd(energy_func.unnormalize(generated_samples), test_set, bins)
+        else:
+            raise NotImplementedError
     else:
-        total_var = compute_total_var_dist(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
-        metric_dict = {'tv_dist': total_var}
-        total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
-        metric_dict['tv_energy'] = total_var
-        
-    idx = torch.randperm(len(generated_samples))[:10000]
-    names, dists = compute_full_dataset_distribution_distances(
-        energy_func.unnormalize(generated_samples)[idx, None],
-        test_set[:, None],
-        energy_func,
-    )
-    for name, dist in zip(names, dists):
-        metric_dict[name] = dist
+        # compute the total variation distance
+        if energy_func.name=='gmm':
+            total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+            metric_dict['tv_energy'] = total_var
+            
+            total_val = compute_gaussian_tvd(
+                energy_func.unnormalize(generated_samples),
+                test_set,
+                bins
+            )
+            metric_dict['tv_sample'] = total_val
+        else:
+            total_var = compute_total_var_dist(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+            metric_dict['tv_dist'] = total_var
+            total_var = compute_total_var_energy(energy_func, energy_func.unnormalize(generated_samples), test_set, bins)
+            metric_dict['tv_energy'] = total_var
+            
+        idx = torch.randperm(len(generated_samples))[:10000]
+        names, dists = compute_full_dataset_distribution_distances(
+            energy_func.unnormalize(generated_samples)[idx, None],
+            test_set[:, None],
+            energy_func,
+            NAMES = [
+            "1-Wasserstein",
+            "2-Wasserstein",
+        ]
+        )
+        for name, dist in zip(names, dists):
+            metric_dict[name] = dist
     return metric_dict
 
 if __name__=='__main__':
@@ -94,24 +107,32 @@ if __name__=='__main__':
     parser.add_argument('--sample_path', type=str, default=None)
     parser.add_argument('--normalize_sample', action='store_true')
     parser.add_argument('--save_des', type=str, required=True)
+    parser.add_argument('--update_metric', type=str, default=None, choices=['tv_energy', 'tv_dist', 'tv_sample'], help='update the metric for which may be not exist or not correct')
 
     args = parser.parse_args()
     
     base_dir = './saved_metrics_figs/'+args.save_des
-    if os.path.exists(base_dir):
-        original_base_dir = base_dir
-        repeat_counter = 1
-        
-        while True:
-            new_dir = f"{original_base_dir}_repeat_{repeat_counter}"
-            if not os.path.exists(new_dir):
-                base_dir = new_dir
-                break
-            repeat_counter += 1
-        
-        print(f"Directory {original_base_dir} already exists. Creating {base_dir} instead.")
+    if args.update_metric is None:
+        if os.path.exists(base_dir):
+            original_base_dir = base_dir
+            repeat_counter = 1
+            
+            while True:
+                new_dir = f"{original_base_dir}_repeat_{repeat_counter}"
+                if not os.path.exists(new_dir):
+                    base_dir = new_dir
+                    break
+                repeat_counter += 1
+            
+            print(f"Directory {original_base_dir} already exists. Creating {base_dir} instead.")
 
-    os.makedirs(base_dir)
+        os.makedirs(base_dir)
+        existed_all_metric = {}
+    else:
+        if not os.path.exists(base_dir):
+            raise FileNotFoundError(f"The metrics file does not exist at {base_dir}")
+        with open(base_dir + '/metrics.pkl', 'rb') as f:
+            existed_all_metric = pickle.load(f)
     
     if args.target == 'mog':
         energy = GMM(test_set_size=10000)
@@ -141,7 +162,7 @@ if __name__=='__main__':
         n_particles=4,
         data_path="data/test_split_DW4.npy",
         data_path_train="data/train_split_DW4.npy",
-        data_path_val="data/val_split_DW4.npy",)
+        data_path_val="data/val_split_DW4.npy")
         target_type = 'dw'
     elif args.target == 'lj13':
         energy = LennardJonesEnergy(
@@ -160,7 +181,7 @@ if __name__=='__main__':
         data_path="data/test_split_LJ55-1000-part1.npy",
         data_path_train="data/train_split_LJ55-1000-part1.npy",
         data_path_val="data/val_split_LJ55-1000-part1.npy",
-        data_path_test="data/test_split_LJ55-1000-part1.npy"
+        data_path_test="data/test_split_LJ55-1000-part1.npy",
         )
         target_type = 'lj55'
         
@@ -182,16 +203,19 @@ if __name__=='__main__':
         samples = energy.normalize(samples)
     
     sampled_samples = samples[torch.randint(0, len(samples), (len(energy._test_set),))]
-    if target_type == 'mog':
-        energy.get_single_dataset_fig(energy.unnormalize(sampled_samples), '', plotting_bounds=plotting_bounds)
-        plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
-        energy.get_single_dataset_fig(energy._test_set, '',plotting_bounds=plotting_bounds)
-        plt.savefig(base_dir + '/gt.pdf')
-    # elif target_type == 'dw':
-    else:
-        energy.get_dataset_fig(energy.unnormalize(sampled_samples))
-        plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
-    all_metric = get_all_metric(energy, samples, bins)
+    
+    if args.update_metric is not None:
+        if target_type == 'mog':
+            energy.get_single_dataset_fig(energy.unnormalize(sampled_samples), '', plotting_bounds=plotting_bounds)
+            plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
+            energy.get_single_dataset_fig(energy._test_set, '',plotting_bounds=plotting_bounds)
+            plt.savefig(base_dir + '/gt.pdf')
+        # elif target_type == 'dw':
+        else:
+            energy.get_dataset_fig(energy.unnormalize(sampled_samples))
+            plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
+            
+    all_metric = get_all_metric(energy, sampled_samples, bins, existed_all_metric, args.update_metric)
     # beautifully print all_metric, only contains: 'tv' or 'Wassertein'
     print('Metrics:')
     for key, value in all_metric.items():
