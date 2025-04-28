@@ -245,7 +245,7 @@ class DEMLitModule(LightningModule):
 
         self.reverse_sde = VEReverseSDE(self.net, self.noise_schedule)
         
-        target_score = lambda t, x: estimate_grad_and_value_Rt(t, x, self.energy_function, self.noise_schedule, num_mc_samples=num_estimator_mc_samples)[1]
+        target_score = lambda t, x: estimate_grad_Rt(t, x, self.energy_function, self.noise_schedule, num_mc_samples=num_estimator_mc_samples)
         self.oracle_reverse_sde = VEReverseSDE(target_score, self.noise_schedule)
     
 
@@ -1202,6 +1202,7 @@ class DEMLitModule(LightningModule):
         self.eval_epoch_end("val")
 
     def on_test_epoch_end(self) -> None:
+        output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
         wandb_logger = get_wandb_logger(self.loggers)
         if self.test_mode == "test_oracle":
             sde = self.oracle_reverse_sde
@@ -1221,7 +1222,7 @@ class DEMLitModule(LightningModule):
         batch_size = 1000
         final_samples = []
         n_batches = self.num_samples_to_save // batch_size
-        test_set = self.energy_function.sample_test_set(-1, full=True)
+        # test_set = self.energy_function.sample_test_set(-1, full=True)
         print("Generating samples")
         for i in trange(n_batches):
             start = time.time()
@@ -1234,13 +1235,15 @@ class DEMLitModule(LightningModule):
             final_samples.append(samples)
             end = time.time()
             print(f"batch {i} took{end - start: 0.2f}s")
-
-            if i == 0:
-                self.energy_function.log_on_epoch_end(
-                    samples,
-                    self.energy_function(samples),
-                    wandb_logger,
-                )
+            
+            path = f"{output_dir}/samples_{self.num_samples_to_save}_batch_{i+1}.pt"
+            torch.save(samples, path)
+            # if i == 0:
+            #     self.energy_function.log_on_epoch_end(
+            #         samples,
+            #         self.energy_function(samples),
+            #         wandb_logger,
+            #     )
 
         final_samples = torch.cat(final_samples, dim=0)
 
@@ -1263,12 +1266,10 @@ class DEMLitModule(LightningModule):
         # self.log_dict(d, sync_dist=True)
         # print(f"Done computing large batch distribution distances. W2 = {dists[1]}")
 
-        output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
         path = f"{output_dir}/samples_{self.num_samples_to_save}.pt"
         torch.save(final_samples, path)
         print(f"Saving samples to {path}")
-        import os
-
+        # import os
         # os.makedirs(self.energy_function.name, exist_ok=True)
         # path2 = f"{self.energy_function.name}/samples_{self.hparams.version}_{self.num_samples_to_save}.pt"
         # torch.save(final_samples, path2)
