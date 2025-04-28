@@ -39,6 +39,7 @@ from .components.score_estimator import estimate_grad_Rt, estimate_grad_and_valu
 from .components.score_scaler import BaseScoreScaler
 from .components.sde_integration import integrate_sde
 from .components.sdes import VEReverseSDE
+from tqdm import trange
 
 
 def t_stratified_loss(batch_t, batch_loss, num_bins=5, loss_name=None):
@@ -157,6 +158,7 @@ class DEMLitModule(LightningModule):
         num_negative_time_steps=100,
         seed=None,
         nll_batch_size=256,
+        test_mode = 'test',
     ) -> None:
         """Initialize a `MNISTLitModule`.
 
@@ -172,6 +174,7 @@ class DEMLitModule(LightningModule):
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
+        self.test_mode = test_mode
 
         if seed is not None:
             random.seed(seed)
@@ -241,6 +244,10 @@ class DEMLitModule(LightningModule):
         self.dim = self.energy_function.dimensionality
 
         self.reverse_sde = VEReverseSDE(self.net, self.noise_schedule)
+        
+        target_score = lambda t, x: estimate_grad_and_value_Rt(t, x, self.energy_function, self.noise_schedule, num_mc_samples=num_estimator_mc_samples)[1]
+        self.oracle_reverse_sde = VEReverseSDE(target_score, self.noise_schedule)
+    
 
         grad_fxn = estimate_grad_and_value_Rt
         if use_richardsons:
@@ -772,6 +779,15 @@ class DEMLitModule(LightningModule):
                 negative_time=self.negative_time,
             )
             generated_energies = self.energy_function(generated_samples)
+        elif prefix == 'test_oracle':
+            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
+            generated_samples = self.generate_samples(
+                reverse_sde=self.oracle_reverse_sde,
+                num_samples=self.eval_batch_size,
+                diffusion_scale=self.diffusion_scale,
+                negative_time=self.negative_time,
+            )
+            generated_energies = self.energy_function(data_set)
         else:
             if len(self.buffer) < self.eval_batch_size:
                 return
@@ -793,6 +809,14 @@ class DEMLitModule(LightningModule):
         if prefix == "test":
             data_set = self.energy_function.sample_test_set(self.eval_batch_size)
             generated_samples = self.generate_samples(
+                num_samples=self.eval_batch_size,
+                diffusion_scale=self.diffusion_scale,
+                negative_time=self.negative_time,
+            )
+        elif prefix == 'test_oracle':
+            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
+            generated_samples = self.generate_samples(
+                reverse_sde=self.oracle_reverse_sde,
                 num_samples=self.eval_batch_size,
                 diffusion_scale=self.diffusion_scale,
                 negative_time=self.negative_time,
@@ -819,6 +843,14 @@ class DEMLitModule(LightningModule):
         if prefix == "test":
             data_set = self.energy_function.sample_test_set(self.eval_batch_size)
             generated_samples = self.generate_samples(
+                num_samples=self.eval_batch_size,
+                diffusion_scale=self.diffusion_scale,
+                negative_time=self.negative_time,
+            )
+        elif prefix == 'test_oracle':
+            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
+            generated_samples = self.generate_samples(
+                reverse_sde=self.oracle_reverse_sde,
                 num_samples=self.eval_batch_size,
                 diffusion_scale=self.diffusion_scale,
                 negative_time=self.negative_time,
@@ -942,14 +974,23 @@ class DEMLitModule(LightningModule):
                 return 0.0
 
             batch = self.energy_function.sample_test_set(self.eval_batch_size)
+            sde = None
+        elif prefix == 'test_oracle':
+            if self.nll_with_cfm:
+                return 0.0
+            batch = self.energy_function.sample_test_set(self.eval_batch_size)
+            sde = self.oracle_reverse_sde
+
         elif prefix == "val":
             batch = self.energy_function.sample_val_set(self.eval_batch_size)
-
+            sde = None
+            
         backwards_samples = self.last_samples
 
         # generate samples noise --> data if needed
         if backwards_samples is None or self.eval_batch_size > len(backwards_samples):
             backwards_samples = self.generate_samples(
+                reverse_sde = sde, 
                 num_samples=self.eval_batch_size,
                 diffusion_scale=self.diffusion_scale,
                 negative_time=self.negative_time,
@@ -1031,13 +1072,19 @@ class DEMLitModule(LightningModule):
         self.eval_step("val", batch, batch_idx)
 
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> None:
-        self.eval_step("test", batch, batch_idx)
+        
+        self.eval_step(self.test_mode, batch, batch_idx)
 
     def eval_epoch_end(self, prefix: str):
         wandb_logger = get_wandb_logger(self.loggers)
         # convert to dict of tensors assumes [batch, ...]
         if len(self.eval_step_outputs) == 0:
             return
+        
+        if prefix == "test_oracle":
+            sde =self.oracle_reverse_sde
+        else:
+            sde = None
 
         outputs = {
             k: torch.cat([dic[k] for dic in self.eval_step_outputs], dim=0)
@@ -1078,6 +1125,7 @@ class DEMLitModule(LightningModule):
             )
 
             dem_samples = self.generate_samples(
+                reverse_sde=sde,
                 num_samples=batch_size,
                 diffusion_scale=self.diffusion_scale,
                 negative_time=self.negative_time,
@@ -1155,12 +1203,16 @@ class DEMLitModule(LightningModule):
 
     def on_test_epoch_end(self) -> None:
         wandb_logger = get_wandb_logger(self.loggers)
+        if self.test_mode == "test_oracle":
+            sde = self.oracle_reverse_sde
+        else:
+            sde = None
 
-        self.eval_epoch_end("test")
-        self._log_energy_w2(prefix="test")
-        if self.energy_function.is_molecule:
-            self._log_dist_w2(prefix="test")
-            self._log_dist_total_var(prefix="test")
+        # self.eval_epoch_end(self.test_mode)
+        # self._log_energy_w2(prefix=self.test_mode)
+        # if self.energy_function.is_molecule:
+        #     self._log_dist_w2(prefix=self.test_mode)
+        #     self._log_dist_total_var(prefix=self.test_mode)
 
         if self.nll_with_cfm:
             self._cfm_test_epoch_end()
@@ -1171,9 +1223,10 @@ class DEMLitModule(LightningModule):
         n_batches = self.num_samples_to_save // batch_size
         test_set = self.energy_function.sample_test_set(-1, full=True)
         print("Generating samples")
-        for i in range(n_batches):
+        for i in trange(n_batches):
             start = time.time()
             samples = self.generate_samples(
+                reverse_sde = sde, 
                 num_samples=batch_size,
                 diffusion_scale=self.diffusion_scale,
                 negative_time=self.negative_time,
@@ -1191,24 +1244,24 @@ class DEMLitModule(LightningModule):
 
         final_samples = torch.cat(final_samples, dim=0)
 
-        print("Computing large batch distribution distances")
-        idx = torch.randperm(len(final_samples))[:10000]
-        names, dists = compute_full_dataset_distribution_distances(
-            self.energy_function.unnormalize(final_samples)[idx, None],
-            test_set[:, None],
-            self.energy_function,
-        )
-        names = [f"test/full_batch/{name}" for name in names]
-        d = dict(zip(names, dists))
-        try:
-            d["test/full_batch/dist_total_var"] = self._compute_total_var(
-                self.energy_function.unnormalize(final_samples), test_set
-            )
-        except:
-            pass
+        # print("Computing large batch distribution distances")
+        # idx = torch.randperm(len(final_samples))[:10000]
+        # names, dists = compute_full_dataset_distribution_distances(
+        #     self.energy_function.unnormalize(final_samples)[idx, None],
+        #     test_set[:, None],
+        #     self.energy_function,
+        # )
+        # names = [f"test/full_batch/{name}" for name in names]
+        # d = dict(zip(names, dists))
+        # try:
+        #     d["test/full_batch/dist_total_var"] = self._compute_total_var(
+        #         self.energy_function.unnormalize(final_samples), test_set
+        #     )
+        # except:
+        #     pass
 
-        self.log_dict(d, sync_dist=True)
-        print(f"Done computing large batch distribution distances. W2 = {dists[1]}")
+        # self.log_dict(d, sync_dist=True)
+        # print(f"Done computing large batch distribution distances. W2 = {dists[1]}")
 
         output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
         path = f"{output_dir}/samples_{self.num_samples_to_save}.pt"
@@ -1216,10 +1269,10 @@ class DEMLitModule(LightningModule):
         print(f"Saving samples to {path}")
         import os
 
-        os.makedirs(self.energy_function.name, exist_ok=True)
-        path2 = f"{self.energy_function.name}/samples_{self.hparams.version}_{self.num_samples_to_save}.pt"
-        torch.save(final_samples, path2)
-        print(f"Saving samples to {path2}")
+        # os.makedirs(self.energy_function.name, exist_ok=True)
+        # path2 = f"{self.energy_function.name}/samples_{self.hparams.version}_{self.num_samples_to_save}.pt"
+        # torch.save(final_samples, path2)
+        # print(f"Saving samples to {path2}")
 
     def setup(self, stage: str) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,

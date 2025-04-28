@@ -17,6 +17,8 @@ defaults:
 task_name: "eval"
 
 tags: ["dev"]
+test_mode: 'test' # test or test_oracle
+num_estimator_mc_samples: 1000
 
 # passing checkpoint path is necessary for evaluation
 ckpt_path: ???

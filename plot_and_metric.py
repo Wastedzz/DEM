@@ -28,9 +28,9 @@ def compute_gaussian_tvd(samples1, samples_test, bins):
 
 
 def compute_total_var_energy(energy_function, generated_samples, data_set, bins):
-    generated_samples_energy = energy_function(generated_samples).cpu().numpy().reshape(-1)
+    generated_samples_energy = energy_function(generated_samples).detach().cpu().numpy().reshape(-1)
     
-    data_set_energy = energy_function(data_set).cpu().numpy().reshape(-1)
+    data_set_energy = energy_function(data_set).detach().cpu().numpy().reshape(-1)
     
     H_data_set, x_data_set = np.histogram(data_set_energy, bins=bins)
     H_generated_samples, _ = np.histogram(generated_samples_energy, bins=(x_data_set))
@@ -44,8 +44,8 @@ def compute_total_var_energy(energy_function, generated_samples, data_set, bins)
 
 
 def compute_total_var_dist(energy_function, generated_samples, data_set, bins):
-    generated_samples_dists = energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1)
-    data_set_dists = energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1)
+    generated_samples_dists = energy_function.interatomic_dist(generated_samples).detach().cpu().numpy().reshape(-1)
+    data_set_dists = energy_function.interatomic_dist(data_set).detach().cpu().numpy().reshape(-1)
     H_data_set, x_data_set = np.histogram(data_set_dists, bins=bins)
     H_generated_samples, _ = np.histogram(generated_samples_dists, bins=(x_data_set))
     total_var = (

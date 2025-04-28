@@ -32,6 +32,7 @@ buffer:
 
 score_scaler: null
 
+test_mode: 'test' 
 num_init_samples: 1024
 num_estimator_mc_samples: 100
 num_samples_to_generate_per_epoch: 1024
