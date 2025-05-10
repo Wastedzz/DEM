@@ -1073,8 +1073,8 @@ class DEMLitModule(LightningModule):
         self.eval_step("val", batch, batch_idx)
 
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> None:
-        
-        self.eval_step(self.test_mode, batch, batch_idx)
+        if self.test_mode =='test':
+            self.eval_step(self.test_mode, batch, batch_idx)
 
     def eval_epoch_end(self, prefix: str):
         wandb_logger = get_wandb_logger(self.loggers)
@@ -1220,7 +1220,7 @@ class DEMLitModule(LightningModule):
             self._cfm_test_epoch_end()
             return
 
-        batch_size = min(10000,self.num_samples_to_save)
+        batch_size = min(self.eval_batch_size,self.num_samples_to_save)
         final_samples = []
         n_batches = self.num_samples_to_save // batch_size
         total_time_cost = 0
