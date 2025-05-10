@@ -40,6 +40,7 @@ from .components.score_scaler import BaseScoreScaler
 from .components.sde_integration import integrate_sde
 from .components.sdes import VEReverseSDE
 from tqdm import trange
+import pickle
 
 
 def t_stratified_loss(batch_t, batch_loss, num_bins=5, loss_name=None):
@@ -175,7 +176,7 @@ class DEMLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
         self.test_mode = test_mode
-
+        print(seed)
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
@@ -1219,9 +1220,10 @@ class DEMLitModule(LightningModule):
             self._cfm_test_epoch_end()
             return
 
-        batch_size = 1000
+        batch_size = min(10000,self.num_samples_to_save)
         final_samples = []
         n_batches = self.num_samples_to_save // batch_size
+        total_time_cost = 0
         # test_set = self.energy_function.sample_test_set(-1, full=True)
         print("Generating samples")
         for i in trange(n_batches):
@@ -1232,9 +1234,11 @@ class DEMLitModule(LightningModule):
                 diffusion_scale=self.diffusion_scale,
                 negative_time=self.negative_time,
             )
-            final_samples.append(samples)
             end = time.time()
-            print(f"batch {i} took{end - start: 0.2f}s")
+            final_samples.append(samples)
+            time_cost = end - start
+            total_time_cost += time_cost
+            print(f"batch {i} took{time_cost: 0.2f}s")
             
             path = f"{output_dir}/samples_{self.num_samples_to_save}_batch_{i+1}.pt"
             torch.save(samples, path)
@@ -1244,7 +1248,12 @@ class DEMLitModule(LightningModule):
             #         self.energy_function(samples),
             #         wandb_logger,
             #     )
-
+        # save total_time_cost as pkl
+        time_cost_path = f"{output_dir}/total_time_cost.pkl"
+        with open(time_cost_path, "wb") as f:
+            pickle.dump(total_time_cost, f)
+        print(f"Total time cost:{total_time_cost} saved to {time_cost_path}")
+        
         final_samples = torch.cat(final_samples, dim=0)
 
         # print("Computing large batch distribution distances")
