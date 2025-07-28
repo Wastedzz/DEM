@@ -28,16 +28,16 @@ def compute_distribution_distances(
     NAMES = [
         "1-Wasserstein",
         "2-Wasserstein",
-        "Linear_MMD",
-        "Poly_MMD",
-        "RBF_MMD",
-        "Mean_MSE",
-        "Mean_L2",
-        "Mean_L1",
-        "Median_MSE",
-        "Median_L2",
-        "Median_L1",
-        "Eq-EMD2",
+        # "Linear_MMD",
+        # "Poly_MMD",
+        # "RBF_MMD",
+        # "Mean_MSE",
+        # "Mean_L2",
+        # "Mean_L1",
+        # "Median_MSE",
+        # "Median_L2",
+        # "Median_L1",
+        # "Eq-EMD2",
     ]
     is_jagged = isinstance(true, list)
     pred_is_jagged = isinstance(pred, list)
@@ -93,12 +93,12 @@ def compute_full_dataset_distribution_distances(
     pred: torch.Tensor, true: Union[torch.Tensor, list], energy_function, NAMES = [
         "1-Wasserstein",
         "2-Wasserstein",
-        "Mean_MSE",
-        "Mean_L2",
-        "Mean_L1",
-        "Median_MSE",
-        "Median_L2",
-        "Median_L1",
+        # "Mean_MSE",
+        # "Mean_L2",
+        # "Mean_L1",
+        # "Median_MSE",
+        # "Median_L2",
+        # "Median_L1",
     ]
 ):
     """computes distances between distributions.

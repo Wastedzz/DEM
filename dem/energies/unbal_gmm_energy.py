@@ -3,7 +3,7 @@ from torchvision.transforms import ToTensor
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from fab.target_distributions import gmm
+import dem.energies.gmm_lrds as gmm
 from fab.utils.plotting import plot_contours, plot_marginal_pair
 from lightning.pytorch.loggers import WandbLogger
 
@@ -21,7 +21,7 @@ class GMM(BaseEnergyFunction):
         log_var_scaling=1.0,
         device="cpu",
         true_expectation_estimation_n_samples=int(1e5),
-        plotting_buffer_sample_size=1024,
+        plotting_buffer_sample_size=512,
         plot_samples_epoch_period=5,
         should_unnormalize=False,
         data_normalization_factor=50,
@@ -40,7 +40,7 @@ class GMM(BaseEnergyFunction):
             use_gpu=use_gpu,
             true_expectation_estimation_n_samples=true_expectation_estimation_n_samples,
         )
-        self._dimensionality=dimensionality
+        self._dimensionality = dimensionality
         self.loc_scaling = loc_scaling
         self.curr_epoch = 0
         self.device = device
@@ -103,6 +103,7 @@ class GMM(BaseEnergyFunction):
     def __call__(self, samples: torch.Tensor) -> torch.Tensor:
         if self.should_unnormalize:
             samples = self.unnormalize(samples)
+
         return self.gmm.log_prob(samples)
 
     @property
@@ -166,7 +167,6 @@ class GMM(BaseEnergyFunction):
 
         self.curr_epoch += 1
 
-
     def log_samples(
         self,
         samples: torch.Tensor,
@@ -181,6 +181,7 @@ class GMM(BaseEnergyFunction):
             samples = self.unnormalize(samples)
         samples_fig = self.get_single_dataset_fig(samples, name)
         wandb_logger.log_image(f"{name}", [samples_fig])
+
 
     def get_single_dataset_fig(self, samples, name, plotting_bounds=(-1.4 * 40, 1.4 * 40)):
         plotting_bounds = (-1.4 * self.loc_scaling, 1.4 * self.loc_scaling)

@@ -40,7 +40,7 @@ num_samples_to_sample_from_buffer: 512
 use_snis: true
 num_samples_to_snis: 10
 num_samples_to_snis_numerator: 10
-num_samples_to_snis_denominator: 10
+num_samples_to_snis_denominator: 1000
 eval_batch_size: 1024
 
 num_integration_steps: 1000

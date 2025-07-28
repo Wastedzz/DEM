@@ -3,7 +3,7 @@ slurm*out
 src.egg-info
 .env
 dem_results
-
+*_results
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
