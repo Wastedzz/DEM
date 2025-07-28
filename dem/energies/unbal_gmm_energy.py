@@ -30,13 +30,14 @@ class GMM(BaseEnergyFunction):
         val_set_size=2000,
         data_path_train=None,
     ):
+        data_normalization_factor = n_mixes / 0.8 if data_normalization_factor is None else data_normalization_factor
         use_gpu = device != "cpu"
         torch.manual_seed(0)  # seed of 0 for GMM problem
         self.gmm = gmm.GMM(
             dim=dimensionality,
             n_mixes=n_mixes,
             loc_scaling=loc_scaling,
-            log_var_scaling=log_var_scaling,
+            var_scaling=log_var_scaling,
             use_gpu=use_gpu,
             true_expectation_estimation_n_samples=true_expectation_estimation_n_samples,
         )

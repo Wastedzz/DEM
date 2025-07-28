@@ -178,8 +178,7 @@ class DEMLitModule(LightningModule):
         :param buffer: Buffer of sampled objects
         """
         super().__init__()
-        # Seems to slow things down
-        # torch.set_float32_matmul_precision('medium')
+        torch.set_float32_matmul_precision('high') 
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
@@ -372,29 +371,6 @@ class DEMLitModule(LightningModule):
         """
         return self.net(t, x)
 
-    # def get_cfm_loss(self, samples: torch.Tensor) -> torch.Tensor:
-    #     x0 = self.cfm_prior.sample(self.num_samples_to_sample_from_buffer)
-    #     x1 = samples
-    #     x1 = self.energy_function.unnormalize(x1)
-
-    #     t, xt, ut = self.conditional_flow_matcher.sample_location_and_conditional_flow(x0, x1)
-
-    #     if self.energy_function.is_molecule and self.cfm_sigma != 0:
-    #         xt = remove_mean(
-    #             xt, self.energy_function.n_particles, self.energy_function.n_spatial_dim
-    #         )
-
-    #     vt = self.cfm_net(t, xt)
-    #     loss = (vt - ut).pow(2).mean(dim=-1)
-
-    #     # if self.energy_function.normalization_max is not None:
-    #     #    loss = loss / (self.energy_function.normalization_max ** 2)
-
-    #     return loss
-
-    # def should_train_cfm(self, batch_idx: int) -> bool:
-    #     return self.nll_with_cfm or self.hparams.debug_use_train_data
-
     def get_score_loss(
         self, times: torch.Tensor, samples: torch.Tensor, noised_samples: torch.Tensor
     ) -> torch.Tensor:
@@ -407,13 +383,14 @@ class DEMLitModule(LightningModule):
         return error_norms
 
     def get_loss(self, times: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
-        estimated_logpt_xt, estimated_score = estimate_grad_and_value_Rt(
-            times,
-            samples,
-            self.energy_function,
-            self.noise_schedule,
-            num_mc_samples=self.num_estimator_mc_samples,
-        )
+        with torch.amp.autocast('cuda'):
+            estimated_logpt_xt, estimated_score = estimate_grad_and_value_Rt(
+                times,
+                samples,
+                self.energy_function,
+                self.noise_schedule,
+                num_mc_samples=self.num_estimator_mc_samples,
+            )
 
         if self.clipper is not None and self.clipper.should_clip_scores:
             if self.energy_function.is_molecule:
@@ -436,46 +413,6 @@ class DEMLitModule(LightningModule):
         error_norms = (predicted_score - estimated_score).pow(2).mean(-1)
 
         return self.lambda_weighter(times) * error_norms, estimated_logpt_xt
-
-    # def training_step(self, batch, batch_idx):
-    #     loss = 0.0
-    #     iter_samples = self.energy_function.sample_train_set(self.num_samples_to_sample_from_buffer)
-    #     times = torch.rand(
-    #         (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
-    #     )
-    #     noise = torch.randn_like(iter_samples) * self.noise_schedule.h(times).sqrt().unsqueeze(-1)
-    #     noised_samples = iter_samples + noise
-        
-    #     if self.energy_function.is_molecule:
-    #         noised_samples = remove_mean(
-    #             noised_samples,
-    #             self.energy_function.n_particles,
-    #             self.energy_function.n_spatial_dim,
-    #         )
-    #     predicted_score = self.forward(times, noised_samples)
-    #     true_score = -noise / (
-    #         self.noise_schedule.h(times).unsqueeze(1) + 1e-4
-    #     )
-    #     dem_loss = (predicted_score - true_score).pow(2).mean(-1)
-
-    #     # dem_loss = self.get_score_loss(times, iter_samples, noised_samples)
-    #     self.log_dict(
-    #         t_stratified_loss(times, dem_loss, loss_name="train/stratified/dem_loss"),sync_dist=True
-    #     )
-    #     dem_loss = dem_loss.mean()
-    #     loss = loss + dem_loss
-
-    #     # update and log metrics
-    #     self.dem_train_loss(dem_loss)
-    #     self.log(
-    #         "train/dem_loss",
-    #         self.dem_train_loss,
-    #         on_step=False,
-    #         on_epoch=True,
-    #         prog_bar=True,
-    #         sync_dist=True
-    #     )
-    #     return loss
         
         
     def training_step(self, batch, batch_idx):
@@ -506,25 +443,43 @@ class DEMLitModule(LightningModule):
                 dem_loss, _ = self.get_loss(times, noised_samples)
                 self.nte += self.num_estimator_mc_samples * self.num_samples_to_sample_from_buffer
             else:
-                ratio = 2 / (self.num_samples_to_snis + 1)
-                num_samples_exploit = math.ceil(self.num_samples_to_sample_from_buffer * ratio)
-                num_samples_explore = self.num_samples_to_sample_from_buffer - num_samples_exploit
+                # ratio = .5
+                # num_samples_exploit = math.ceil(self.num_samples_to_sample_from_buffer * ratio)
+                # num_samples_explore = self.num_samples_to_sample_from_buffer - num_samples_exploit
 
-                perm_iter_samples = iter_samples[torch.randperm(iter_samples.shape[0])]
+                # perm_iter_samples = iter_samples[torch.randperm(iter_samples.shape[0])]
 
-                iter_samples_explore = perm_iter_samples[:num_samples_explore]
-                iter_samples_exploit = perm_iter_samples[num_samples_explore:]                
+                # iter_samples_explore = perm_iter_samples[:num_samples_explore]
+                # iter_samples_exploit = perm_iter_samples[num_samples_explore:]                
                 
-                # times_explore = torch.rand((num_samples_explore,), device=iter_samples.device)
-                alpha = 0.75
-                beta = 0.75
-                times_explore = torch.clamp(torch.distributions.Beta(alpha, beta).sample((num_samples_explore,)), 1e-4, 1-1e-4).to(iter_samples.device)
-                P_mean = -0.5
-                P_std = .15
-                log_t = torch.randn((num_samples_exploit,), device=iter_samples.device) * P_std + P_mean
-                times_exploit = torch.clamp(torch.exp(log_t),1e-4, 1-1e-4)
+                # # times_explore = torch.rand((num_samples_explore,), device=iter_samples.device)
+                # alpha = 0.8
+                # beta = 1.2
+                # times_explore = torch.clamp(torch.distributions.Beta(alpha, beta).sample((num_samples_explore,)), 1e-4, 1-1e-4).to(iter_samples.device)
+                # P_mean = -0.7
+                # P_std = .24
+                # log_t = torch.randn((num_samples_exploit,), device=iter_samples.device) * P_std + P_mean
+                # times_exploit = torch.clamp(torch.exp(log_t),1e-4, 1-1e-4)
+                # times = torch.concat([times_explore, times_exploit],0)
                 
-                times = torch.concat([times_explore, times_exploit],0)
+                # times = torch.rand(
+                #     (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
+                # )
+                times = torch.rand(
+                    (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
+                )
+                small_t = -1
+                small_t_idx = times < small_t
+                large_t_idx = times >= small_t
+                
+                times_explore = times[small_t_idx]
+                times_exploit = times[large_t_idx]
+
+                iter_samples_explore = iter_samples[small_t_idx]
+                iter_samples_exploit = iter_samples[large_t_idx]
+                
+                num_samples_explore = iter_samples_explore.shape[0]
+                num_samples_exploit = iter_samples_exploit.shape[0]
                 
                 dem_loss = torch.zeros(iter_samples.shape[0], device=iter_samples.device)
 
@@ -541,15 +496,13 @@ class DEMLitModule(LightningModule):
                         )
 
                     dem_loss_explore, _ = self.get_loss(times_explore, noised_samples_explore)
-                    dem_loss[:num_samples_explore] = dem_loss_explore
-                    dem_explore_loss_mean = dem_loss_explore.mean()
-                    self.nte += self.num_estimator_mc_samples * len(iter_samples_explore)
+                    dem_loss[small_t_idx] = dem_loss_explore
+                    self.nte += self.num_estimator_mc_samples * num_samples_explore
 
                 if len(iter_samples_exploit) > 0:
                     # repeat for snis
                     iter_samples_exploit = iter_samples_exploit.repeat(self.num_samples_to_snis, *(1,) * (iter_samples_exploit.dim() - 1))
                     repeat_times = times_exploit.repeat(self.num_samples_to_snis, *(1,) * (times_exploit.dim() - 1))
-
                     noise = torch.randn_like(iter_samples_exploit)
                     sigma = self.noise_schedule.h(repeat_times).sqrt()
                     noised_samples_exploit = iter_samples_exploit + noise * sigma.unsqueeze(-1)
@@ -587,8 +540,7 @@ class DEMLitModule(LightningModule):
                     snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
                     snis_ratio /= snis_ratio.sum(0, keepdim=True)
                     dem_loss_exploit = (dem_loss_exploit * snis_ratio).sum(0)
-                    dem_exploit_loss_mean = dem_loss_exploit.mean()
-                    dem_loss[num_samples_explore:] = dem_loss_exploit
+                    dem_loss[large_t_idx] = dem_loss_exploit
                     # for _ in range(snis_ratio.shape[0]):
                     #     self.log_dict(t_stratified_loss(times, snis_ratio[_], loss_name="train/stratified/snis_ratio_{}".format(_)), sync_dist=True)
                     self.log_dict(t_stratified_loss(times_exploit, 1/torch.sum(snis_ratio**2,dim=0)/snis_ratio.shape[0], loss_name="train/stratified/ess"), sync_dist=True)
@@ -606,8 +558,7 @@ class DEMLitModule(LightningModule):
             self.log_dict(
                 t_stratified_loss(times, dem_loss, loss_name="train/stratified/dem_loss"),sync_dist=True
             )
-            dem_loss = dem_exploit_loss_mean + dem_explore_loss_mean
-            loss = loss + dem_loss
+            loss = loss + dem_loss.mean()
 
             # update and log metrics
             self.dem_train_loss(dem_loss)
@@ -619,37 +570,6 @@ class DEMLitModule(LightningModule):
                 prog_bar=True,
                 sync_dist=True
             )
-
-        # if self.should_train_cfm(batch_idx):
-        #     if self.hparams.debug_use_train_data:
-        #         cfm_samples = self.energy_function.sample_train_set(
-        #             self.num_samples_to_sample_from_buffer
-        #         )
-        #         times = torch.rand(
-        #             (self.num_samples_to_sample_from_buffer,), device=cfm_samples.device
-        #         )
-        #     else:
-        #         cfm_samples, _, _ = self.buffer.sample(
-        #             self.num_samples_to_sample_from_buffer,
-        #             prioritize=self.prioritize_cfm_training_samples,
-        #         )
-
-        #     cfm_loss = self.get_cfm_loss(cfm_samples)
-        #     self.log_dict(
-        #         t_stratified_loss(times, cfm_loss, loss_name="train/stratified/cfm_loss")
-        #     )
-        #     cfm_loss = cfm_loss.mean()
-        #     self.cfm_train_loss(cfm_loss)
-        #     self.log(
-        #         "train/cfm_loss",
-        #         self.cfm_train_loss,
-        #         on_step=True,
-        #         on_epoch=False,
-        #         prog_bar=True,
-        #     )
-
-        #     loss = loss + self.hparams.cfm_loss_weight * cfm_loss
-
         return loss
 
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
@@ -706,40 +626,6 @@ class DEMLitModule(LightningModule):
             return trajectory
 
         return trajectory[-1]
-
-    # def compute_nll(
-    #     self,
-    #     cnf,
-    #     prior,
-    #     samples: torch.Tensor,
-    # ):
-    #     batch_size = self.nll_batch_size
-    #     num_batches = math.ceil(len(samples) / float(batch_size))
-    #     nlls, x_1s, logdetjacs, log_p_1s = [], [], [], []
-    #     for i in tqdm(range(num_batches)):
-    #         start_idx = i * batch_size
-    #         end_idx = start_idx + batch_size
-    #         iter_samples = samples[start_idx:end_idx]
-
-    #         aug_samples = torch.cat(
-    #             [iter_samples, torch.zeros(iter_samples.shape[0], 1, device=samples.device)],
-    #             dim=-1,
-    #         )
-    #         aug_output = cnf.integrate(aug_samples)[-1]
-    #         x_1s.append(aug_output[..., :-1])
-    #         logdetjacs.append(aug_output[..., -1])
-
-    #         log_p_1s.append(prior.log_prob(x_1s[-1]))
-    #         log_p_0 = log_p_1s[-1] + logdetjacs[-1]
-
-    #         nlls.append(-log_p_0)
-
-    #     return (
-    #         torch.cat(nlls, dim=0),
-    #         torch.cat(x_1s, dim=0),
-    #         torch.cat(logdetjacs, dim=0),
-    #         torch.cat(log_p_1s, dim=0),
-    #     )
 
     def on_train_epoch_end(self) -> None:
         "Lightning hook that is called when a training epoch ends."
@@ -884,78 +770,6 @@ class DEMLitModule(LightningModule):
 
         return total_var
 
-    # def compute_log_z(self, cnf, prior, samples, prefix, name):
-    #     nll, _, _, _ = self.compute_nll(cnf, prior, samples)
-    #     # energy function will unnormalize the samples itself
-    #     logp = self.energy_function(self.energy_function.normalize(samples))
-    #     logq = -nll
-    #     logz = logp - logq
-
-    #     logz_metric = getattr(self, f"{prefix}_{name}logz")
-    #     logz_metric.update(logz)
-    #     self.log(
-    #         f"{prefix}/{name}logz",
-    #         logz_metric,
-    #         on_step=False,
-    #         on_epoch=True,
-    #         prog_bar=True,
-    #     )
-
-    #     ess = (torch.nn.functional.softmax(logp - logq) ** 2).sum().pow(-1)
-    #     # Normalize to range 0-1
-    #     ess = ess / logp.shape[0]
-    #     ess_metric = getattr(self, f"{prefix}_{name}ess")
-    #     ess_metric.update(ess)
-    #     self.log(
-    #         f"{prefix}/{name}ess",
-    #         ess_metric,
-    #         on_step=False,
-    #         on_epoch=True,
-    #         prog_bar=True,
-    #     )
-
-    # def compute_and_log_nll(self, cnf, prior, samples, prefix, name):
-    #     batch_size = self.nll_batch_size
-    #     num_batches = math.ceil(len(samples) / float(batch_size))
-
-    #     range_generator = range(num_batches)
-    #     if num_batches > 3:
-    #         range_generator = tqdm(range_generator)
-
-    #     for i in range_generator:
-    #         start_idx = i * batch_size
-    #         end_idx = start_idx + batch_size
-    #         batch = samples[start_idx:end_idx]
-
-    #         cnf.nfe = 0.0
-    #         nll, forwards_samples, logdetjac, log_p_1 = self.compute_nll(cnf, prior, batch)
-    #         nfe_metric = getattr(self, f"{prefix}_{name}nfe")
-    #         nll_metric = getattr(self, f"{prefix}_{name}nll")
-    #         logdetjac_metric = getattr(self, f"{prefix}_{name}nll_logdetjac")
-    #         log_p_1_metric = getattr(self, f"{prefix}_{name}nll_log_p_1")
-    #         nfe_metric.update(cnf.nfe)
-    #         nll_metric.update(nll)
-    #         logdetjac_metric.update(logdetjac)
-    #         log_p_1_metric.update(log_p_1)
-
-    #     self.log_dict(
-    #         {
-    #             f"{prefix}/{name}_nfe": nfe_metric,
-    #             f"{prefix}/{name}nll_logdetjac": logdetjac_metric,
-    #             f"{prefix}/{name}nll_log_p_1": log_p_1_metric,
-    #             # f"{prefix}/{name}logz": logz_metric,
-    #         },
-    #         on_epoch=True,
-    #     )
-    #     self.log(
-    #         f"{prefix}/{name}nll",
-    #         nll_metric,
-    #         on_step=False,
-    #         on_epoch=True,
-    #         prog_bar=True,
-    #     )
-    #     return forwards_samples
-
     def eval_step(self, prefix: str, batch: torch.Tensor, batch_idx: int) -> None:
         """Perform a single eval step on a batch of data from the validation set.
 
@@ -1030,38 +844,6 @@ class DEMLitModule(LightningModule):
             "gen_0": backwards_samples,
         }
 
-        # if self.nll_with_dem:
-        #     batch = self.energy_function.normalize(batch)
-        #     forwards_samples = self.compute_and_log_nll(
-        #         self.dem_cnf, self.prior, batch, prefix, "dem_"
-        #     )
-        #     self.compute_log_z(self.cfm_cnf, self.prior, backwards_samples, prefix, "dem_")
-        # if self.nll_with_cfm:
-        #     forwards_samples = self.compute_and_log_nll(
-        #         self.cfm_cnf, self.cfm_prior, batch, prefix, ""
-        #     )
-
-        #     iter_samples, _, _ = self.buffer.sample(self.eval_batch_size)
-
-        #     # compute nll on buffer if not training cfm only
-        #     if not self.hparams.debug_use_train_data and self.nll_on_buffer:
-        #         forwards_samples = self.compute_and_log_nll(
-        #             self.cfm_cnf, self.cfm_prior, iter_samples, prefix, "buffer_"
-        #         )
-
-        #     if self.compute_nll_on_train_data:
-        #         train_samples = self.energy_function.sample_train_set(self.eval_batch_size)
-        #         forwards_samples = self.compute_and_log_nll(
-        #             self.cfm_cnf, self.cfm_prior, train_samples, prefix, "train_"
-        #         )
-
-        # if self.logz_with_cfm:
-        #     backwards_samples = self.cfm_cnf.generate(
-        #         self.cfm_prior.sample(self.eval_batch_size),
-        #     )[-1]
-        #     # backwards_samples = self.generate_cfm_samples(self.eval_batch_size)
-        #     self.compute_log_z(self.cfm_cnf, self.cfm_prior, backwards_samples, prefix, "")
-
         self.eval_step_outputs.append(to_log)
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> None:
@@ -1090,29 +872,6 @@ class DEMLitModule(LightningModule):
 
         unprioritized_buffer_samples, cfm_samples, dem_samples = None, None, None
         if self.nll_with_cfm:
-            # batch_size = (
-            #     len(outputs["data_0"])
-            #     if "data_0" in outputs
-            #     else self.num_samples_to_generate_per_epoch
-            # )
-
-            # unprioritized_buffer_samples, _, _ = self.buffer.sample(
-            #     batch_size,
-            #     prioritize=self.prioritize_cfm_training_samples,
-            # )
-
-            # cfm_samples = self.cfm_cnf.generate(
-            #     self.cfm_prior.sample(batch_size),
-            # )[-1]
-
-            # self.energy_function.log_on_epoch_end(
-            #     self.last_samples,
-            #     self.last_energies,
-            #     wandb_logger,
-            #     unprioritized_buffer_samples=unprioritized_buffer_samples,
-            #     cfm_samples=cfm_samples,
-            #     replay_buffer=self.buffer,
-            # )
             pass
 
         else:
@@ -1156,51 +915,6 @@ class DEMLitModule(LightningModule):
             self.log_dict(d, sync_dist=True)
 
         self.eval_step_outputs.clear()
-
-    # def _cfm_test_epoch_end(self) -> None:
-    #     test_set = self.energy_function.sample_test_set(-1, full=True)
-
-    #     forwards_samples = self.compute_and_log_nll(
-    #         self.cfm_cnf, self.cfm_prior, test_set, "test", ""
-    #     )
-
-    #     batch_size = self.nll_batch_size
-    #     final_samples = []
-    #     n_batches = math.ceil(self.num_samples_to_save / float(batch_size))
-    #     print(f"Generating {self.num_samples_to_save} CFM samples")
-    #     for i in range(n_batches):
-    #         start = time.time()
-    #         backwards_samples = self.cfm_cnf.generate(
-    #             self.cfm_prior.sample(batch_size),
-    #         )[-1]
-
-    #         final_samples.append(backwards_samples)
-    #         end = time.time()
-    #         print(f"batch {i} took{end - start: 0.2f}s")
-    #         break
-
-    #     print("Computing log Z and ESS on generated samples")
-    #     final_samples = torch.cat(final_samples, dim=0)
-
-    #     self.energy_function.log_on_epoch_end(
-    #         final_samples,
-    #         self.energy_function(final_samples),
-    #         get_wandb_logger(self.loggers),
-    #     )
-
-    #     self.compute_log_z(self.cfm_cnf, self.cfm_prior, final_samples, "test", "")
-
-    #     output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    #     path = f"{output_dir}/samples_{self.num_samples_to_save}.pt"
-    #     torch.save(final_samples, path)
-    #     print(f"Saving samples to {path}")
-
-    #     import os
-
-    #     os.makedirs(self.energy_function.name, exist_ok=True)
-    #     path2 = f"{self.energy_function.name}/samples_{self.hparams.version}_{self.num_samples_to_save}.pt"
-    #     torch.save(final_samples, path2)
-    #     print(f"Saving samples to {path2}")
 
     def on_validation_epoch_end(self) -> None:
         self.eval_epoch_end("val")

@@ -1,7 +1,7 @@
 _target_: dem.models.components.mlp.MyMLP
 _partial_: true
 hidden_size: 128
-hidden_layers: 3
+hidden_layers: 4
 emb_size: 128
 time_emb: "sinusoidal"
 input_emb: "sinusoidal"

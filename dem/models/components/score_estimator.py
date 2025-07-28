@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from functools import lru_cache
 
 from dem.energies.base_energy_function import BaseEnergyFunction
 from dem.models.components.clipper import Clipper

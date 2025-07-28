@@ -10,7 +10,7 @@ from fab.utils.numerical import MC_estimate_true_expectation, quadratic_function
 
 
 class GMM(nn.Module, TargetDistribution):
-    def __init__(self, dim, n_mixes, loc_scaling, log_var_scaling=0.1, seed=0,
+    def __init__(self, dim, n_mixes, loc_scaling, var_scaling=0.1, seed=0,
                  n_test_set_samples=1000, use_gpu=True,
                  true_expectation_estimation_n_samples=int(1e7)):
         super(GMM, self).__init__()
@@ -24,11 +24,21 @@ class GMM(nn.Module, TargetDistribution):
         # 2. Means : uniformly chosen in [-n_modes, n_modes]^dim
 
         mean = (torch.rand((n_mixes, dim)) - 0.5)*2 * loc_scaling
-        log_var = torch.ones((n_mixes, dim)) * log_var_scaling
+        var = torch.ones((n_mixes, dim)) * var_scaling
 
+        # dist_info = {
+        #     'mean': mean,
+        #     'var': var,
+        #     'mixture_weights': mixture_weights,
+        # }
+        # torch.save(dist_info, "{}d_gmm{}_dist_info.pt".format(self.dim, self.n_mixes))
+        # print(dist_info)
+        # import sys
+        # sys.exit(0)
+        
         self.register_buffer("cat_probs", mixture_weights)
         self.register_buffer("locs", mean)
-        self.register_buffer("scale_trils", torch.diag_embed(f.softplus(log_var)))
+        self.register_buffer("scale_trils", torch.diag_embed(var.sqrt()))
         self.expectation_function = quadratic_function
         self.register_buffer("true_expectation", MC_estimate_true_expectation(self,
                                                              self.expectation_function,
