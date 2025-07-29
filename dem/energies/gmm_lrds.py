@@ -19,12 +19,13 @@ class GMM(nn.Module, TargetDistribution):
         self.dim = dim
         self.n_test_set_samples = n_test_set_samples
         
-        # 1. Mixture weights: geometrically increasing (base = 1. <-> uniform weights)
-        mixture_weights = torch.logspace(0., 1., n_mixes, base=3)
-        # 2. Means : uniformly chosen in [-n_modes, n_modes]^dim
+        # # 1. Mixture weights: geometrically increasing (base = 1. <-> uniform weights)
+        # mixture_weights = torch.logspace(0., 1., n_mixes, base=3)
+        # # 2. Means : uniformly chosen in [-n_modes, n_modes]^dim
 
-        mean = (torch.rand((n_mixes, dim)) - 0.5)*2 * loc_scaling
-        var = torch.ones((n_mixes, dim)) * var_scaling
+        # mean = (torch.rand((n_mixes, dim)) - 0.5)*2 * loc_scaling
+        # var = torch.ones((n_mixes, dim)) * var_scaling
+        
 
         # dist_info = {
         #     'mean': mean,
@@ -32,10 +33,14 @@ class GMM(nn.Module, TargetDistribution):
         #     'mixture_weights': mixture_weights,
         # }
         # torch.save(dist_info, "{}d_gmm{}_dist_info.pt".format(self.dim, self.n_mixes))
-        # print(dist_info)
-        # import sys
-        # sys.exit(0)
-        
+        mean = torch.load("{}d_gmm{}_dist_info.pt".format(self.dim, self.n_mixes),weights_only=True)['mean']
+        mixture_weights = torch.load("{}d_gmm{}_dist_info.pt".format(self.dim, self.n_mixes),weights_only=True)['mixture_weights']
+        var = torch.load("{}d_gmm{}_dist_info.pt".format(self.dim, self.n_mixes),weights_only=True)['var']
+
+        # # prior mean and var
+        # self.prior_mean = torch.load('mean_var_{}d_gmm{}.pt'.format(self.dim, self.n_mixes),weights_only=True)['mean']
+        # self.prior_var = torch.load('mean_var_{}d_gmm{}.pt'.format(self.dim, self.n_mixes),weights_only=True)['var']
+                
         self.register_buffer("cat_probs", mixture_weights)
         self.register_buffer("locs", mean)
         self.register_buffer("scale_trils", torch.diag_embed(var.sqrt()))

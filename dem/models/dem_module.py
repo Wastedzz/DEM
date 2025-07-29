@@ -191,44 +191,16 @@ class DEMLitModule(LightningModule):
             torch.manual_seed(seed)
 
         self.net = net(energy_function=energy_function)
-        # self.cfm_net = net(energy_function=energy_function)
-
         if use_ema:
             self.net = EMAWrapper(self.net)
-            # self.cfm_net = EMAWrapper(self.cfm_net)
         if input_scaling_factor is not None or output_scaling_factor is not None:
             self.net = ScalingWrapper(self.net, input_scaling_factor, output_scaling_factor)
-
-            # self.cfm_net = ScalingWrapper(
-            #     self.cfm_net, input_scaling_factor, output_scaling_factor
-            # )
 
         self.score_scaler = None
         if score_scaler is not None:
             self.score_scaler = self.hparams.score_scaler(noise_schedule)
 
             self.net = self.score_scaler.wrap_model_for_unscaling(self.net)
-            # self.cfm_net = self.score_scaler.wrap_model_for_unscaling(self.cfm_net)
-
-        # self.dem_cnf = CNF(
-        #     self.net,
-        #     is_diffusion=True,
-        #     use_exact_likelihood=use_exact_likelihood,
-        #     noise_schedule=noise_schedule,
-        #     method=nll_integration_method,
-        #     num_steps=num_integration_steps,
-        #     atol=tol,
-        #     rtol=tol,
-        # )
-        # self.cfm_cnf = CNF(
-        #     self.cfm_net,
-        #     is_diffusion=False,
-        #     use_exact_likelihood=use_exact_likelihood,
-        #     method=nll_integration_method,
-        #     num_steps=num_integration_steps,
-        #     atol=tol,
-        #     rtol=tol,
-        # )
 
         self.nll_with_cfm = nll_with_cfm
         self.nll_with_dem = nll_with_dem
@@ -270,62 +242,6 @@ class DEMLitModule(LightningModule):
         self.val_loss = MeanMetric()
         self.test_loss = MeanMetric()
 
-        self.val_nll_logdetjac = MeanMetric()
-        self.test_nll_logdetjac = MeanMetric()
-        self.val_nll_log_p_1 = MeanMetric()
-        self.test_nll_log_p_1 = MeanMetric()
-        self.val_nll = MeanMetric()
-        self.test_nll = MeanMetric()
-        self.val_nfe = MeanMetric()
-        self.test_nfe = MeanMetric()
-        self.val_energy_w2 = MeanMetric()
-        self.val_dist_w2 = MeanMetric()
-        self.val_dist_total_var = MeanMetric()
-
-        self.val_dem_nll_logdetjac = MeanMetric()
-        self.test_dem_nll_logdetjac = MeanMetric()
-        self.val_dem_nll_log_p_1 = MeanMetric()
-        self.test_dem_nll_log_p_1 = MeanMetric()
-        self.val_dem_nll = MeanMetric()
-        self.test_dem_nll = MeanMetric()
-        self.val_dem_nfe = MeanMetric()
-        self.test_dem_nfe = MeanMetric()
-        self.val_dem_logz = MeanMetric()
-        self.val_logz = MeanMetric()
-        self.val_big_batch_logz = MeanMetric()
-        self.test_dem_logz = MeanMetric()
-        self.test_logz = MeanMetric()
-        self.val_dem_ess = MeanMetric()
-        self.val_ess = MeanMetric()
-        self.val_big_batch_ess = MeanMetric()
-        self.test_dem_ess = MeanMetric()
-        self.test_ess = MeanMetric()
-
-        # self.val_buffer_nll_logdetjac = MeanMetric()
-        # self.val_buffer_nll_log_p_1 = MeanMetric()
-        # self.val_buffer_nll = MeanMetric()
-        # self.val_buffer_nfe = MeanMetric()
-        # self.val_buffer_logz = MeanMetric()
-        # self.val_buffer_ess = MeanMetric()
-        # self.test_buffer_nll_logdetjac = MeanMetric()
-        # self.test_buffer_nll_log_p_1 = MeanMetric()
-        # self.test_buffer_nll = MeanMetric()
-        # self.test_buffer_nfe = MeanMetric()
-        # self.test_buffer_logz = MeanMetric()
-        # self.test_buffer_ess = MeanMetric()
-
-        # self.val_train_nll_logdetjac = MeanMetric()
-        # self.val_train_nll_log_p_1 = MeanMetric()
-        # self.val_train_nll = MeanMetric()
-        # self.val_train_nfe = MeanMetric()
-        # self.val_train_logz = MeanMetric()
-        # self.val_train_ess = MeanMetric()
-        # self.test_train_nll_logdetjac = MeanMetric()
-        # self.test_train_nll_log_p_1 = MeanMetric()
-        # self.test_train_nll = MeanMetric()
-        # self.test_train_nfe = MeanMetric()
-        # self.test_train_logz = MeanMetric()
-        # self.test_train_ess = MeanMetric()
 
         self.num_init_samples = num_init_samples
         self.num_estimator_mc_samples = num_estimator_mc_samples
@@ -409,9 +325,7 @@ class DEMLitModule(LightningModule):
             estimated_score = self.score_scaler.scale_target_score(estimated_score, times)
 
         predicted_score = self.forward(times, samples)
-
         error_norms = (predicted_score - estimated_score).pow(2).mean(-1)
-
         return self.lambda_weighter(times) * error_norms, estimated_logpt_xt
         
         
@@ -419,12 +333,20 @@ class DEMLitModule(LightningModule):
         loss = 0.0
         if not self.hparams.debug_use_train_data:
             if self.hparams.use_buffer:
-                iter_samples, _, _ = self.buffer.sample(self.num_samples_to_sample_from_buffer)
+                num_samples_from_buffer = self.num_samples_to_sample_from_buffer//2
+                num_samples_from_prior = self.num_samples_to_sample_from_buffer - num_samples_from_buffer
+                buffer_samples, _, _ = self.buffer.sample(num_samples_from_buffer)
+                prior_samples = self.coverage_prior.sample((num_samples_from_prior,))
+                iter_samples = torch.concat([buffer_samples, prior_samples], 0)[torch.randperm(self.num_samples_to_sample_from_buffer)]
             else:
-                iter_samples = self.prior.sample(self.num_samples_to_sample_from_buffer)
-                # Uncomment for SM
-                # iter_samples = self.energy_function.sample_train_set(self.num_samples_to_sample_from_buffer)
+                # if self.energy_function.name == 'gmm':
+                #     iter_samples = self.coverage_prior.sample((self.num_samples_to_sample_from_buffer,))
+                # else:
+                #     iter_samples = self.prior.sample(self.num_samples_to_sample_from_buffer)
+                iter_samples = self.coverage_prior.sample((self.num_samples_to_sample_from_buffer,))
 
+                # Uncomment for SM
+                # iter_samples = self.energy_function.sample_train_set(self.num_samples_to_sample_from_buffer) 
             if not self.use_snis:
                 times = torch.rand(
                     (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
@@ -432,7 +354,6 @@ class DEMLitModule(LightningModule):
                 noised_samples = iter_samples + (
                     torch.randn_like(iter_samples) * self.noise_schedule.h(times).sqrt().unsqueeze(-1)
                 )
-
                 if self.energy_function.is_molecule:
                     noised_samples = remove_mean(
                         noised_samples,
@@ -500,6 +421,35 @@ class DEMLitModule(LightningModule):
                     self.nte += self.num_estimator_mc_samples * num_samples_explore
 
                 if len(iter_samples_exploit) > 0:
+                    # snis correction
+                    # dominator
+                    noise = torch.randn_like(iter_samples_exploit)
+                    sigmas = self.noise_schedule.h(times_exploit).sqrt()
+                    noised_samples_exploit = iter_samples_exploit + (
+                        noise * sigmas.unsqueeze(-1)
+                    )
+                    if self.energy_function.is_molecule:
+                        noised_samples_exploit = remove_mean(
+                            noised_samples_exploit,
+                            self.energy_function.n_particles,
+                            self.energy_function.n_spatial_dim,
+                        )
+                    if self.hparams.use_buffer:
+                        num_from_buffer = num_samples_exploit*self.num_samples_to_snis_denominator // 2
+                        x0_buffer, _, _ = self.buffer.sample(num_from_buffer)
+                        x0_prior = self.coverage_prior.sample((num_samples_exploit*self.num_samples_to_snis_denominator-num_from_buffer,))
+                        x0 = torch.concat([x0_buffer, x0_prior], 0)[torch.randperm(num_samples_exploit*self.num_samples_to_snis_denominator)]
+                    else:
+                        x0 = self.coverage_prior.sample((num_samples_exploit*self.num_samples_to_snis_denominator,))
+                        # if self.energy_function.name == 'gmm':
+                        #     x0 = self.coverage_prior.sample((num_samples_exploit*self.num_samples_to_snis_denominator,))
+                        # else:
+                        #     x0 = self.prior.sample(num_samples_exploit*self.num_samples_to_snis_denominator)
+                    x0 = x0.view(self.num_samples_to_snis_denominator, *iter_samples_exploit.shape)
+                    log_Z = 0.5 * iter_samples_exploit.shape[1] * torch.log(2 * math.pi * sigmas**2)
+                    energy = -.5 * torch.norm(x0 - noised_samples_exploit.unsqueeze(0), dim=-1, p=2)**2 / sigmas**2                    
+                    log_is_denom = energy.logsumexp(0) - log_Z - math.log(self.num_samples_to_snis_denominator)
+
                     # repeat for snis
                     iter_samples_exploit = iter_samples_exploit.repeat(self.num_samples_to_snis, *(1,) * (iter_samples_exploit.dim() - 1))
                     repeat_times = times_exploit.repeat(self.num_samples_to_snis, *(1,) * (times_exploit.dim() - 1))
@@ -517,32 +467,14 @@ class DEMLitModule(LightningModule):
                     dem_loss_exploit, log_is_nume = self.get_loss(repeat_times, noised_samples_exploit)
                     self.nte += self.num_estimator_mc_samples * num_samples_exploit * self.num_samples_to_snis
                     dem_loss_exploit = dem_loss_exploit.view(self.num_samples_to_snis, num_samples_exploit)
-                    
-                    # snis correction    
-                    # # numerator
-                    # snis_nume_sigma = sigma.repeat(self.num_samples_to_snis_numerator, *(1,) * (sigma.dim() - 1))
-                    # snis_noised_samples = noised_samples_exploit.repeat(self.num_samples_to_snis_numerator, *(1,) * (noised_samples_exploit.dim() - 1))
-                    # x_0t = snis_noised_samples + (
-                    #     torch.randn_like(snis_noised_samples) * snis_nume_sigma.unsqueeze(-1)
-                    # )
-                    # log_prob = self.energy_function(x_0t).view(self.num_samples_to_snis_numerator, self.num_samples_to_snis*num_samples_exploit)
-                    # log_is_nume = torch.logsumexp(log_prob, dim=0)
 
-                    # donominator
-                    snis_denom_sigma = sigma.repeat(self.num_samples_to_snis_denominator, *(1,) * (sigma.dim() - 1))
-                    x0, _, _ = self.buffer.sample(num_samples_exploit*self.num_samples_to_snis*self.num_samples_to_snis_denominator)
-                    x0 = x0.view(self.num_samples_to_snis_denominator, *iter_samples_exploit.shape)
-                    log_is_denom = (-torch.norm(x0 - noised_samples_exploit.unsqueeze(0), dim=-1, p=2)/2/snis_denom_sigma.view(self.num_samples_to_snis_denominator, *sigma.shape)).mean(0)
-
-                    log_is_ratio = (log_is_nume - log_is_denom).view(self.num_samples_to_snis, num_samples_exploit)
+                    log_is_ratio = (log_is_nume.view(self.num_samples_to_snis, num_samples_exploit) - log_is_denom.unsqueeze(0))
                     log_snis_ratio = log_is_ratio - log_is_ratio.logsumexp(0, keepdim=True)
                     snis_ratio = log_snis_ratio.exp()
                     snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
                     snis_ratio /= snis_ratio.sum(0, keepdim=True)
                     dem_loss_exploit = (dem_loss_exploit * snis_ratio).sum(0)
                     dem_loss[large_t_idx] = dem_loss_exploit
-                    # for _ in range(snis_ratio.shape[0]):
-                    #     self.log_dict(t_stratified_loss(times, snis_ratio[_], loss_name="train/stratified/snis_ratio_{}".format(_)), sync_dist=True)
                     self.log_dict(t_stratified_loss(times_exploit, 1/torch.sum(snis_ratio**2,dim=0)/snis_ratio.shape[0], loss_name="train/stratified/ess"), sync_dist=True)
 
             self.log(
@@ -629,146 +561,21 @@ class DEMLitModule(LightningModule):
 
     def on_train_epoch_end(self) -> None:
         "Lightning hook that is called when a training epoch ends."
-        if self.clipper_gen is not None:
-            reverse_sde = VEReverseSDE(
-                self.clipper_gen.wrap_grad_fxn(self.net), self.noise_schedule
-            )
-            self.last_samples = self.generate_samples(
-                reverse_sde=reverse_sde, diffusion_scale=self.diffusion_scale
-            )
-            self.last_energies = self.energy_function(self.last_samples)
-        else:
-            self.last_samples = self.generate_samples(diffusion_scale=self.diffusion_scale)
-            self.last_energies = self.energy_function(self.last_samples)
-
-        self.buffer.add(self.last_samples, self.last_energies)
-
-        # self._log_energy_w2(prefix="val")
-
-        # if self.energy_function.is_molecule:
-        #     self._log_dist_w2(prefix="val")
-        #     self._log_dist_total_var(prefix="val")
-
-    def _log_energy_w2(self, prefix="val"):
-        if prefix == "test":
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
-            generated_samples = self.generate_samples(
-                num_samples=self.eval_batch_size,
-                diffusion_scale=self.diffusion_scale,
-                negative_time=self.negative_time,
-            )
-            generated_energies = self.energy_function(generated_samples)
-        elif prefix == 'test_oracle':
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
-            generated_samples = self.generate_samples(
-                reverse_sde=self.oracle_reverse_sde,
-                num_samples=self.eval_batch_size,
-                diffusion_scale=self.diffusion_scale,
-                negative_time=self.negative_time,
-            )
-            generated_energies = self.energy_function(data_set)
-        else:
-            if len(self.buffer) < self.eval_batch_size:
-                return
-            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
-            _, generated_energies = self.buffer.get_last_n_inserted(self.eval_batch_size)
-
-        energies = self.energy_function(self.energy_function.normalize(data_set))
-        energy_w2 = pot.emd2_1d(energies.cpu().numpy(), generated_energies.cpu().numpy())
-
-        self.log(
-            f"{prefix}/energy_w2",
-            self.val_energy_w2(energy_w2),
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            sync_dist=True,
-        )
-
-    def _log_dist_w2(self, prefix="val"):
-        if prefix == "test":
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
-            generated_samples = self.generate_samples(
-                num_samples=self.eval_batch_size,
-                diffusion_scale=self.diffusion_scale,
-                negative_time=self.negative_time,
-            )
-        elif prefix == 'test_oracle':
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
-            generated_samples = self.generate_samples(
-                reverse_sde=self.oracle_reverse_sde,
-                num_samples=self.eval_batch_size,
-                diffusion_scale=self.diffusion_scale,
-                negative_time=self.negative_time,
-            )
-        else:
-            if len(self.buffer) < self.eval_batch_size:
-                return
-            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
-            generated_samples, _ = self.buffer.get_last_n_inserted(self.eval_batch_size)
-
-        dist_w2 = pot.emd2_1d(
-            self.energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1),
-            self.energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1),
-        )
-        self.log(
-            f"{prefix}/dist_w2",
-            self.val_dist_w2(dist_w2),
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            sync_dist=True
-        )
-
-    def _log_dist_total_var(self, prefix="val"):
-        if prefix == "test":
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
-            generated_samples = self.generate_samples(
-                num_samples=self.eval_batch_size,
-                diffusion_scale=self.diffusion_scale,
-                negative_time=self.negative_time,
-            )
-        elif prefix == 'test_oracle':
-            data_set = self.energy_function.sample_test_set(self.eval_batch_size)
-            generated_samples = self.generate_samples(
-                reverse_sde=self.oracle_reverse_sde,
-                num_samples=self.eval_batch_size,
-                diffusion_scale=self.diffusion_scale,
-                negative_time=self.negative_time,
-            )
-        else:
-            if len(self.buffer) < self.eval_batch_size:
-                return
-            data_set = self.energy_function.sample_val_set(self.eval_batch_size)
-            generated_samples, _ = self.buffer.get_last_n_inserted(self.eval_batch_size)
-
-        total_var = self._compute_total_var(generated_samples, data_set)
-
-        self.log(
-            f"{prefix}/dist_total_var",
-            self.val_dist_total_var(total_var),
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            sync_dist=True
-        )
-
-    def _compute_total_var(self, generated_samples, data_set):
-        generated_samples_dists = (
-            self.energy_function.interatomic_dist(generated_samples).cpu().numpy().reshape(-1),
-        )
-        data_set_dists = self.energy_function.interatomic_dist(data_set).cpu().numpy().reshape(-1)
-        bins = int(np.sqrt(len(data_set)))
-        H_data_set, x_data_set = np.histogram(data_set_dists, bins=bins)
-        H_generated_samples, _ = np.histogram(generated_samples_dists, bins=(x_data_set))
-        total_var = (
-            0.5
-            * np.abs(
-                H_data_set / H_data_set.sum() - H_generated_samples / H_generated_samples.sum()
-            ).sum()
-        )
-
-        return total_var
+        if self.hparams.use_buffer:
+            if self.current_epoch % 2 == 0:
+                if self.clipper_gen is not None:
+                    reverse_sde = VEReverseSDE(
+                        self.clipper_gen.wrap_grad_fxn(self.net), self.noise_schedule
+                    )
+                    self.last_samples = self.generate_samples(
+                        reverse_sde=reverse_sde, diffusion_scale=self.diffusion_scale
+                    )
+                    self.last_energies = self.energy_function(self.last_samples)
+                else:
+                    self.last_samples = self.generate_samples(diffusion_scale=self.diffusion_scale)
+                    self.last_energies = self.energy_function(self.last_samples)
+                self.buffer.add(self.last_samples, self.last_energies)
+                
 
     def eval_step(self, prefix: str, batch: torch.Tensor, batch_idx: int) -> None:
         """Perform a single eval step on a batch of data from the validation set.
@@ -808,8 +615,9 @@ class DEMLitModule(LightningModule):
 
         # sample eval_batch_size from generated samples from dem to match dimensions
         # required for distribution metrics
-        if backwards_samples is not None and len(backwards_samples) != self.eval_batch_size:
-            indices = torch.randperm(len(backwards_samples))[: self.eval_batch_size]
+        real_batch_size = len(batch)
+        if backwards_samples is not None and len(backwards_samples) != real_batch_size:
+            indices = torch.randperm(len(backwards_samples))[: real_batch_size]
             backwards_samples = backwards_samples[indices]
 
         if batch is None:
@@ -817,12 +625,10 @@ class DEMLitModule(LightningModule):
             self.eval_step_outputs.append({"gen_0": backwards_samples})
             return
 
-        times = torch.rand((self.eval_batch_size,), device=batch.device)
-
+        times = torch.rand((real_batch_size,), device=batch.device)
         noised_batch = batch + (
             torch.randn_like(batch) * self.noise_schedule.h(times).sqrt().unsqueeze(-1)
         )
-
         if self.energy_function.is_molecule:
             noised_batch = remove_mean(
                 noised_batch,
@@ -888,19 +694,6 @@ class DEMLitModule(LightningModule):
                 negative_time=self.negative_time,
             )
 
-            # Only plot dem samples
-            # self.energy_function.log_on_epoch_end(
-            #     dem_samples,
-            #     self.energy_function(dem_samples),
-            #     wandb_logger,
-            # )
-            # self.energy_function.log_on_epoch_end(
-            #     dem_samples,
-            #     self.energy_function(dem_samples),
-            #     tb_logger,
-            #     epoch=self.trainer.global_step
-            # )
-
         if "data_0" in outputs:
             # pad with time dimension 1
             step_samples = cfm_samples if cfm_samples is not None else dem_samples
@@ -926,12 +719,6 @@ class DEMLitModule(LightningModule):
             sde = self.oracle_reverse_sde
         else:
             sde = None
-
-        # self.eval_epoch_end(self.test_mode)
-        # self._log_energy_w2(prefix=self.test_mode)
-        # if self.energy_function.is_molecule:
-        #     self._log_dist_w2(prefix=self.test_mode)
-        #     self._log_dist_total_var(prefix=self.test_mode)
 
         if self.nll_with_cfm:
             # self._cfm_test_epoch_end()
@@ -973,25 +760,6 @@ class DEMLitModule(LightningModule):
         
         final_samples = torch.cat(final_samples, dim=0)
 
-        # print("Computing large batch distribution distances")
-        # idx = torch.randperm(len(final_samples))[:10000]
-        # names, dists = compute_full_dataset_distribution_distances(
-        #     self.energy_function.unnormalize(final_samples)[idx, None],
-        #     test_set[:, None],
-        #     self.energy_function,
-        # )
-        # names = [f"test/full_batch/{name}" for name in names]
-        # d = dict(zip(names, dists))
-        # try:
-        #     d["test/full_batch/dist_total_var"] = self._compute_total_var(
-        #         self.energy_function.unnormalize(final_samples), test_set
-        #     )
-        # except:
-        #     pass
-
-        # self.log_dict(d, sync_dist=True)
-        # print(f"Done computing large batch distribution distances. W2 = {dists[1]}")
-
         path = f"{output_dir}/samples_{self.num_samples_to_save}.pt"
         torch.save(final_samples, path)
         print(f"Saving samples to {path}")
@@ -1010,7 +778,6 @@ class DEMLitModule(LightningModule):
 
         :param stage: Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
         """
-        self.buffer.initialize(self.device)
         self.energy_function.to(self.device)
 
         def _grad_fxn(t, x):
@@ -1023,24 +790,42 @@ class DEMLitModule(LightningModule):
             )
 
         reverse_sde = VEReverseSDE(_grad_fxn, self.noise_schedule)
-
         self.prior = self.partial_prior(device=self.device, scale=self.noise_schedule.h(1) ** 0.5)
-        if self.init_from_prior:
-            init_states = self.prior.sample(self.num_init_samples)
-        else:
-            init_states = self.generate_samples(
-                reverse_sde, self.num_init_samples, diffusion_scale=self.diffusion_scale
+        self.coverage_prior = torch.distributions.MultivariateNormal(
+                loc=self.energy_function.prior_mean.to(self.device),
+                covariance_matrix=self.energy_function.prior_var.to(self.device)
             )
-        init_energies = self.energy_function(init_states)
-
-        self.buffer.add(init_states, init_energies)
+        if self.hparams.use_buffer:
+            self.buffer.initialize(self.device)
+            if self.init_from_prior:
+                init_states = self.coverage_prior.sample((self.num_init_samples,))
+            else:
+                init_states = self.generate_samples(
+                    reverse_sde, self.num_init_samples, diffusion_scale=self.diffusion_scale
+                )
+                init_energies = self.energy_function(init_states)
+                self.buffer.add(init_states, init_energies)
 
         if self.hparams.compile and stage == "fit":
             self.net = torch.compile(self.net)
-            # self.cfm_net = torch.compile(self.cfm_net)
 
-        # if self.nll_with_cfm:
-        #     self.cfm_prior = self.partial_prior(device=self.device, scale=self.cfm_prior_std)
+    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True):
+        """
+        Custom state_dict loader to handle `torch.compile`'s `_orig_mod.` prefix.
+        This allows loading a checkpoint saved from a compiled model into a non-compiled model.
+        """
+        # Create a new state_dict to store the corrected keys
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            # Check for the prefix added by torch.compile
+            if k.startswith("net._orig_mod."):
+                # Remove the `_orig_mod.` prefix
+                new_k = "net." + k[len("net._orig_mod."):]
+                new_state_dict[new_k] = v
+            else:
+                new_state_dict[k] = v
+        # Call the parent's load_state_dict with the new, corrected state_dict
+        super().load_state_dict(new_state_dict, strict=strict)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

@@ -4,8 +4,8 @@ from dem.models.components.distribution_distances import (
     compute_full_dataset_distribution_distances,
 )
 from dem.energies.gmm_energy import GMM
-from dem.energies.multi_double_well_energy import MultiDoubleWellEnergy
-from dem.energies.lennardjones_energy import LennardJonesEnergy
+# from dem.energies.multi_double_well_energy import MultiDoubleWellEnergy
+# from dem.energies.lennardjones_energy import LennardJonesEnergy
 import pickle
 import argparse
 import os
@@ -156,39 +156,78 @@ if __name__=='__main__':
         test_set_size=10000)
         plotting_bounds = (-1.4 * 120, 1.4 * 120)
         target_type = 'mog'
-    elif args.target == 'dw':
-        energy = MultiDoubleWellEnergy(
-        dimensionality=8,
-        n_particles=4,
-        data_path="data/test_split_DW4.npy",
-        data_path_train="data/train_split_DW4.npy",
-        data_path_val="data/val_split_DW4.npy")
-        target_type = 'dw'
-    elif args.target == 'lj13':
-        energy = LennardJonesEnergy(
-        dimensionality=39,
-        n_particles=13,
-        data_path="data/test_split_LJ13-1000.npy",
-        data_path_train="data/train_split_LJ13-1000.npy",
-        data_path_val="data/val_split_LJ13-1000.npy",
-        data_path_test="data/test_split_LJ13-1000.npy",
+    elif 'ub' in args.target: #'ub-dim-mixes':
+        from dem.energies.unbal_gmm_energy import GMM
+        dim = args.target.split('-')[1]
+        mixes = args.target.split('-')[2]
+        energy = GMM(
+            dimensionality=int(dim),
+            n_mixes=int(mixes),
+            loc_scaling=int(mixes),
+            log_var_scaling=.5,
+            test_set_size=8000,
         )
-        target_type = 'lj13'
-    elif args.target == 'lj55':
-        energy = LennardJonesEnergy(
-        dimensionality=165,
-        n_particles=55,
-        data_path="data/test_split_LJ55-1000-part1.npy",
-        data_path_train="data/train_split_LJ55-1000-part1.npy",
-        data_path_val="data/val_split_LJ55-1000-part1.npy",
-        data_path_test="data/test_split_LJ55-1000-part1.npy",
+        target_type = 'mog'
+
+    elif 'lv' in args.target: #'lv-solver-dim-mixes':
+        from dem.energies.unbal_gmm_energy import GMM
+        solver = args.target.split('-')[1]
+        dim = args.target.split('-')[2]
+        mixes = args.target.split('-')[3]
+        energy = GMM(
+            dimensionality=int(dim),
+            n_mixes=int(mixes),
+            loc_scaling=int(mixes),
+            log_var_scaling=.5,
+            test_set_size=8000,
         )
-        target_type = 'lj55'
+        target_type = 'mog'
+    # elif args.target == 'dw':
+    #     energy = MultiDoubleWellEnergy(
+    #     dimensionality=8,
+    #     n_particles=4,
+    #     data_path="data/test_split_DW4.npy",
+    #     data_path_train="data/train_split_DW4.npy",
+    #     data_path_val="data/val_split_DW4.npy")
+    #     target_type = 'dw'
+    # elif args.target == 'lj13':
+    #     energy = LennardJonesEnergy(
+    #     dimensionality=39,
+    #     n_particles=13,
+    #     data_path="data/test_split_LJ13-1000.npy",
+    #     data_path_train="data/train_split_LJ13-1000.npy",
+    #     data_path_val="data/val_split_LJ13-1000.npy",
+    #     data_path_test="data/test_split_LJ13-1000.npy",
+    #     )
+    #     target_type = 'lj13'
+    # elif args.target == 'lj55':
+    #     energy = LennardJonesEnergy(
+    #     dimensionality=165,
+    #     n_particles=55,
+    #     data_path="data/test_split_LJ55-1000-part1.npy",
+    #     data_path_train="data/train_split_LJ55-1000-part1.npy",
+    #     data_path_val="data/val_split_LJ55-1000-part1.npy",
+    #     data_path_test="data/test_split_LJ55-1000-part1.npy",
+    #     )
+    #     target_type = 'lj55'
         
     else:
         raise NotImplementedError(f"Target {args.target} not implemented")
     
-    samples = torch.load(args.sample_path,weights_only=True).cpu()
+    if 'lv' in args.target:
+        sample_path = f"lv_baselines_results/{solver}_dim_{dim}_modes_{mixes}/"
+        # find the pkl file in the directory
+        for file in os.listdir(sample_path):
+            if file.endswith('.pkl'):
+                sample_path += file
+                break
+        if not os.path.exists(sample_path):
+            raise FileNotFoundError(f"The sample file does not exist at {sample_path}")
+        with open(sample_path, 'rb') as f:
+            data = pickle.load(f)
+        samples = data['results'][0]['samples'].cpu()
+    else:
+        samples = torch.load(args.sample_path,weights_only=True).cpu()
 
     bins = int(np.sqrt(len(energy._test_set)))
     samples = samples.to(torch.float32)
@@ -205,12 +244,13 @@ if __name__=='__main__':
     sampled_samples = samples[torch.randint(0, len(samples), (len(energy._test_set),))]
     
     if args.update_metric is None:
-        if target_type == 'mog':
+        if 'lv' in args.target or 'ub' in args.target:
+            pass
+        elif target_type == 'mog':
             energy.get_single_dataset_fig(energy.unnormalize(sampled_samples), '', plotting_bounds=plotting_bounds)
             plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))
             energy.get_single_dataset_fig(energy._test_set, '',plotting_bounds=plotting_bounds)
             plt.savefig(base_dir + '/gt.pdf')
-        # elif target_type == 'dw':
         else:
             energy.get_dataset_fig(energy.unnormalize(sampled_samples))
             plt.savefig(base_dir + '/{}_fig.pdf'.format(args.save_des))

@@ -54,8 +54,10 @@ class GMM(BaseEnergyFunction):
         self.train_set_size = train_set_size
         self.test_set_size = test_set_size
         self.val_set_size = val_set_size
-
         self.data_path_train = data_path_train
+        
+        self.prior_mean = torch.load('mean_var_{}d_gmm{}.pt'.format(dimensionality, n_mixes),weights_only=True)['mean']
+        self.prior_var = torch.load('mean_var_{}d_gmm{}.pt'.format(dimensionality, n_mixes),weights_only=True)['var']
 
         self.name = "gmm"
 
@@ -70,6 +72,8 @@ class GMM(BaseEnergyFunction):
         self.gmm.to(device)
         self.gmm.device = device
         self.device = device
+        self.prior_mean = self.prior_mean.to(device)
+        self.prior_var = self.prior_var.to(device)
         if not self.set_device:
             self._test_set = self._test_set.to(device)
             self._val_set = self._val_set.to(device)
@@ -83,7 +87,10 @@ class GMM(BaseEnergyFunction):
     def setup_train_set(self):
         if self.data_path_train is None:
             train_samples = self.normalize(self.gmm.sample((self.train_set_size,)))
-
+            mins = self.normalization_min
+            maxs = self.normalization_max
+            self.prior_mean = 2 * (self.prior_mean - mins) / (maxs - mins + 1e-5) - 1
+            self.prior_var = (4 / (maxs - mins + 1e-5)**2) * self.prior_var
         else:
             # Assume the samples we are loading from disk are already normalized.
             # This breaks if they are not.

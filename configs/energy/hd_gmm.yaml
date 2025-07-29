@@ -1,0 +1,14 @@
+_target_: dem.energies.unbal_gmm_energy.GMM
+
+dimensionality: 64
+n_mixes: 2
+loc_scaling: ${energy.n_mixes}  # loc_scaling = n_mixes
+log_var_scaling: .5
+
+device: ${trainer.accelerator}
+
+plot_samples_epoch_period: 1
+
+should_unnormalize: true
+data_normalization_factor: null
+data_path_train: null
