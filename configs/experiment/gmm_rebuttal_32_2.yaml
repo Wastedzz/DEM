@@ -6,8 +6,9 @@
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 defaults:
-  - override /energy: gmm
+  - override /energy: hd_gmm
   - override /model/noise_schedule: geometric
+  - override /paths: rebuttal
 
 tags: ["GMM", "iDEM"]
 
@@ -18,6 +19,14 @@ logger:
     tags: ${tags}
     group: "gmm"
 
+trainer:
+  max_epochs: 50
+  check_val_every_n_epoch: 2  
+  gradient_clip_val: 0.5  
+  devices: 8 
+  strategy: ddp  
+  sync_batchnorm: true
+
 model:
   noise_schedule:
     _target_: dem.models.components.noise_schedules.GeometricNoiseSchedule
@@ -26,6 +35,8 @@ model:
 
   buffer:
     prioritize: false
+    max_length: 50000 # matters
+    min_sample_length: 1000 
 
   partial_prior:
     _target_: dem.energies.base_prior.Prior
@@ -49,9 +60,30 @@ model:
 
   diffusion_scale: 1.0
 
-  num_estimator_mc_samples: 500
-  num_samples_to_generate_per_epoch: 1000
+  net:
+    _target_: dem.models.components.mlp.MyMLP
+    _partial_: true
+    hidden_size: 128
+    hidden_layers: 3
 
   # this has to be max 1000 since test_set is 1000
   eval_batch_size: 1000
-  scheduler: null
+
+  init_from_prior: true
+  num_init_samples: 10000
+  num_estimator_mc_samples: 1000
+  num_samples_to_generate_per_epoch: 5120
+  num_samples_to_sample_from_buffer: 2560
+  use_snis: true
+  num_samples_to_snis: 2
+  explore_ratio: 0.5
+  num_samples_to_snis_denominator: 5120
+  # use_buffer: false
+  num_samples_to_save: 10000
+
+data:
+  n_train_batches_per_epoch: 128
+
+energy:
+  dimensionality: 32
+  n_mixes: 2

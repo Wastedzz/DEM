@@ -56,8 +56,12 @@ class GMM(BaseEnergyFunction):
         self.val_set_size = val_set_size
         self.data_path_train = data_path_train
         
-        self.prior_mean = torch.load('mean_var_{}d_gmm{}.pt'.format(dimensionality, n_mixes),weights_only=True)['mean']
-        self.prior_var = torch.load('mean_var_{}d_gmm{}.pt'.format(dimensionality, n_mixes),weights_only=True)['var']
+        try:
+            self.prior_mean = torch.load('mean_var_{}d_gmm{}.pt'.format(dimensionality, n_mixes),weights_only=True)['mean']
+            self.prior_var = torch.load('mean_var_{}d_gmm{}.pt'.format(dimensionality, n_mixes),weights_only=True)['var']
+        except:
+            self.prior_mean = torch.zeros(dimensionality)
+            self.prior_var = torch.eye(dimensionality)
 
         self.name = "gmm"
 

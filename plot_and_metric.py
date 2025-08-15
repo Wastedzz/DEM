@@ -227,7 +227,7 @@ if __name__=='__main__':
             data = pickle.load(f)
         samples = data['results'][0]['samples'].cpu()
     else:
-        samples = torch.load(args.sample_path,weights_only=True).cpu()
+        samples = torch.load(args.sample_path, weights_only=True, map_location='cpu').cpu()
 
     bins = int(np.sqrt(len(energy._test_set)))
     samples = samples.to(torch.float32)

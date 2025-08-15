@@ -19,6 +19,14 @@ logger:
     tags: ${tags}
     group: "gmm"
 
+trainer:
+  max_epochs: 50
+  check_val_every_n_epoch: 5  
+  gradient_clip_val: 0.5  
+  devices: 8 
+  strategy: ddp  
+  sync_batchnorm: true
+
 model:
   noise_schedule:
     _target_: dem.models.components.noise_schedules.GeometricNoiseSchedule
@@ -28,7 +36,7 @@ model:
   buffer:
     prioritize: false
     max_length: 50000
-    min_sample_length: 1000
+    min_sample_length: 1000 
 
   partial_prior:
     _target_: dem.energies.base_prior.Prior
@@ -54,7 +62,6 @@ model:
 
   # this has to be max 1000 since test_set is 1000
   eval_batch_size: 1000
-  scheduler: null
 
   init_from_prior: true
   num_init_samples: 10000
@@ -63,6 +70,10 @@ model:
   num_samples_to_sample_from_buffer: 5120
   use_snis: true
   num_samples_to_snis: 2
-  num_samples_to_snis_numerator: 10
-  num_samples_to_snis_denominator: 10000
+  explore_ratio: .5
+  num_samples_to_snis_denominator: 5120
   # use_buffer: false
+
+energy:
+  dimensionality: 64
+  n_mixes: 2

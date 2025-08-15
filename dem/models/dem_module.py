@@ -131,7 +131,7 @@ class DEMLitModule(LightningModule):
         num_samples_to_sample_from_buffer: int,
         use_snis: bool,
         num_samples_to_snis: int,
-        num_samples_to_snis_numerator: int,
+        explore_ratio: int,
         num_samples_to_snis_denominator: int,
         num_samples_to_save: int,
         eval_batch_size: int,
@@ -238,7 +238,6 @@ class DEMLitModule(LightningModule):
         self.clipped_grad_fxn = self.clipper.wrap_grad_fxn(grad_fxn)
 
         self.dem_train_loss = MeanMetric()
-        self.cfm_train_loss = MeanMetric()
         self.val_loss = MeanMetric()
         self.test_loss = MeanMetric()
 
@@ -250,12 +249,15 @@ class DEMLitModule(LightningModule):
         self.use_snis = use_snis
         if not self.use_snis:
             self.num_samples_to_snis=1
-            self.num_samples_to_snis_numerator=1
             self.num_samples_to_snis_denominator = 1
         else:
             self.num_samples_to_snis = num_samples_to_snis
-            self.num_samples_to_snis_numerator = num_samples_to_snis_numerator
             self.num_samples_to_snis_denominator = num_samples_to_snis_denominator
+        
+        self.explore_ratio = explore_ratio    
+        self.use_buffer = self.hparams.use_buffer
+        if self.explore_ratio == 1:
+            self.use_buffer = False
             
         self.num_integration_steps = num_integration_steps
         self.num_samples_to_save = num_samples_to_save
@@ -332,9 +334,10 @@ class DEMLitModule(LightningModule):
     def training_step(self, batch, batch_idx):
         loss = 0.0
         if not self.hparams.debug_use_train_data:
-            if self.hparams.use_buffer:
-                num_samples_from_buffer = self.num_samples_to_sample_from_buffer//2
-                num_samples_from_prior = self.num_samples_to_sample_from_buffer - num_samples_from_buffer
+            if self.use_buffer:
+                num_samples_from_prior = int(self.num_samples_to_sample_from_buffer * self.explore_ratio)
+                num_samples_from_buffer = self.num_samples_to_sample_from_buffer - num_samples_from_prior
+
                 buffer_samples, _, _ = self.buffer.sample(num_samples_from_buffer)
                 prior_samples = self.coverage_prior.sample((num_samples_from_prior,))
                 iter_samples = torch.concat([buffer_samples, prior_samples], 0)[torch.randperm(self.num_samples_to_sample_from_buffer)]
@@ -364,40 +367,22 @@ class DEMLitModule(LightningModule):
                 dem_loss, _ = self.get_loss(times, noised_samples)
                 self.nte += self.num_estimator_mc_samples * self.num_samples_to_sample_from_buffer
             else:
-                # ratio = .5
-                # num_samples_exploit = math.ceil(self.num_samples_to_sample_from_buffer * ratio)
-                # num_samples_explore = self.num_samples_to_sample_from_buffer - num_samples_exploit
-
-                # perm_iter_samples = iter_samples[torch.randperm(iter_samples.shape[0])]
-
-                # iter_samples_explore = perm_iter_samples[:num_samples_explore]
-                # iter_samples_exploit = perm_iter_samples[num_samples_explore:]                
-                
-                # # times_explore = torch.rand((num_samples_explore,), device=iter_samples.device)
-                # alpha = 0.8
-                # beta = 1.2
-                # times_explore = torch.clamp(torch.distributions.Beta(alpha, beta).sample((num_samples_explore,)), 1e-4, 1-1e-4).to(iter_samples.device)
-                # P_mean = -0.7
-                # P_std = .24
-                # log_t = torch.randn((num_samples_exploit,), device=iter_samples.device) * P_std + P_mean
-                # times_exploit = torch.clamp(torch.exp(log_t),1e-4, 1-1e-4)
-                # times = torch.concat([times_explore, times_exploit],0)
-                
-                # times = torch.rand(
-                #     (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
-                # )
                 times = torch.rand(
                     (self.num_samples_to_sample_from_buffer,), device=iter_samples.device
                 )
-                small_t = -1
-                small_t_idx = times < small_t
-                large_t_idx = times >= small_t
                 
-                times_explore = times[small_t_idx]
-                times_exploit = times[large_t_idx]
+                # small_t = 2
+                # explore_idx = times >= small_t
+                # exploit_idx = times < small_t
 
-                iter_samples_explore = iter_samples[small_t_idx]
-                iter_samples_exploit = iter_samples[large_t_idx]
+                explore_idx = (times>=0.6) & (times<=0.2)
+                exploit_idx = (times<0.6) & (times>0.2)
+
+                times_explore = times[explore_idx]
+                times_exploit = times[exploit_idx]
+
+                iter_samples_explore = iter_samples[explore_idx]
+                iter_samples_exploit = iter_samples[exploit_idx]
                 
                 num_samples_explore = iter_samples_explore.shape[0]
                 num_samples_exploit = iter_samples_exploit.shape[0]
@@ -417,7 +402,7 @@ class DEMLitModule(LightningModule):
                         )
 
                     dem_loss_explore, _ = self.get_loss(times_explore, noised_samples_explore)
-                    dem_loss[small_t_idx] = dem_loss_explore
+                    dem_loss[explore_idx] = dem_loss_explore
                     self.nte += self.num_estimator_mc_samples * num_samples_explore
 
                 if len(iter_samples_exploit) > 0:
@@ -434,11 +419,13 @@ class DEMLitModule(LightningModule):
                             self.energy_function.n_particles,
                             self.energy_function.n_spatial_dim,
                         )
-                    if self.hparams.use_buffer:
-                        num_from_buffer = num_samples_exploit*self.num_samples_to_snis_denominator // 2
+                    if self.use_buffer:
+                        total_snis_samples = num_samples_exploit * self.num_samples_to_snis_denominator
+                        num_from_prior = int(total_snis_samples * self.explore_ratio)
+                        num_from_buffer = total_snis_samples - num_from_prior
                         x0_buffer, _, _ = self.buffer.sample(num_from_buffer)
-                        x0_prior = self.coverage_prior.sample((num_samples_exploit*self.num_samples_to_snis_denominator-num_from_buffer,))
-                        x0 = torch.concat([x0_buffer, x0_prior], 0)[torch.randperm(num_samples_exploit*self.num_samples_to_snis_denominator)]
+                        x0_prior = self.coverage_prior.sample((num_from_prior,))
+                        x0 = torch.concat([x0_buffer, x0_prior], 0)[torch.randperm(total_snis_samples)]
                     else:
                         x0 = self.coverage_prior.sample((num_samples_exploit*self.num_samples_to_snis_denominator,))
                         # if self.energy_function.name == 'gmm':
@@ -474,7 +461,7 @@ class DEMLitModule(LightningModule):
                     snis_ratio = torch.nan_to_num(snis_ratio, nan=1, posinf=5, neginf=0.0)
                     snis_ratio /= snis_ratio.sum(0, keepdim=True)
                     dem_loss_exploit = (dem_loss_exploit * snis_ratio).sum(0)
-                    dem_loss[large_t_idx] = dem_loss_exploit
+                    dem_loss[exploit_idx] = dem_loss_exploit
                     self.log_dict(t_stratified_loss(times_exploit, 1/torch.sum(snis_ratio**2,dim=0)/snis_ratio.shape[0], loss_name="train/stratified/ess"), sync_dist=True)
 
             self.log(
@@ -561,8 +548,8 @@ class DEMLitModule(LightningModule):
 
     def on_train_epoch_end(self) -> None:
         "Lightning hook that is called when a training epoch ends."
-        if self.hparams.use_buffer:
-            if self.current_epoch % 2 == 0:
+        if self.use_buffer:
+            if (self.current_epoch + 1) % 2 == 0:
                 if self.clipper_gen is not None:
                     reverse_sde = VEReverseSDE(
                         self.clipper_gen.wrap_grad_fxn(self.net), self.noise_schedule
@@ -570,11 +557,12 @@ class DEMLitModule(LightningModule):
                     self.last_samples = self.generate_samples(
                         reverse_sde=reverse_sde, diffusion_scale=self.diffusion_scale
                     )
-                    self.last_energies = self.energy_function(self.last_samples)
+                    # self.last_energies = self.energy_function(self.last_samples)
                 else:
                     self.last_samples = self.generate_samples(diffusion_scale=self.diffusion_scale)
-                    self.last_energies = self.energy_function(self.last_samples)
-                self.buffer.add(self.last_samples, self.last_energies)
+                    # self.last_energies = self.energy_function(self.last_samples)
+                # self.buffer.add(self.last_samples, self.last_energies)
+                self.buffer.add(self.last_samples, torch.tensor(0.))
                 
 
     def eval_step(self, prefix: str, batch: torch.Tensor, batch_idx: int) -> None:
@@ -656,8 +644,9 @@ class DEMLitModule(LightningModule):
         self.eval_step("val", batch, batch_idx)
 
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> None:
-        if self.test_mode =='test':
-            self.eval_step(self.test_mode, batch, batch_idx)
+        # if self.test_mode =='test':
+        #     self.eval_step(self.test_mode, batch, batch_idx)
+        pass
 
     def eval_epoch_end(self, prefix: str):
         # wandb_logger = get_wandb_logger(self.loggers)
@@ -713,6 +702,9 @@ class DEMLitModule(LightningModule):
         self.eval_epoch_end("val")
 
     def on_test_epoch_end(self) -> None:
+        # Only execute on the main process to avoid duplicate file saves
+        if not self.trainer.is_global_zero:
+            return
         output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
         wandb_logger = get_wandb_logger(self.loggers)
         if self.test_mode == "test_oracle":
@@ -739,13 +731,15 @@ class DEMLitModule(LightningModule):
                 negative_time=self.negative_time,
             )
             end = time.time()
-            final_samples.append(samples)
+            # Move samples to CPU to save GPU memory
+            samples_cpu = samples.cpu()
+            final_samples.append(samples_cpu)
             time_cost = end - start
             total_time_cost += time_cost
             print(f"batch {i} took{time_cost: 0.2f}s")
             
             path = f"{output_dir}/samples_{self.num_samples_to_save}_batch_{i+1}.pt"
-            torch.save(samples, path)
+            torch.save(samples_cpu, path)
             # if i == 0:
             #     self.energy_function.log_on_epoch_end(
             #         samples,
@@ -758,6 +752,7 @@ class DEMLitModule(LightningModule):
             pickle.dump(total_time_cost, f)
         print(f"Total time cost:{total_time_cost} saved to {time_cost_path}")
         
+        # Concatenate all samples on CPU
         final_samples = torch.cat(final_samples, dim=0)
 
         path = f"{output_dir}/samples_{self.num_samples_to_save}.pt"
@@ -791,11 +786,33 @@ class DEMLitModule(LightningModule):
 
         reverse_sde = VEReverseSDE(_grad_fxn, self.noise_schedule)
         self.prior = self.partial_prior(device=self.device, scale=self.noise_schedule.h(1) ** 0.5)
-        self.coverage_prior = torch.distributions.MultivariateNormal(
-                loc=self.energy_function.prior_mean.to(self.device),
-                covariance_matrix=self.energy_function.prior_var.to(self.device)
-            )
-        if self.hparams.use_buffer:
+        # print('*'*10, self.noise_schedule.h(1) ** 0.5)
+        # import sys
+        # sys.exit(0)
+        # self.coverage_prior = torch.distributions.MultivariateNormal(
+        #         loc=self.energy_function.prior_mean.to(self.device),
+        #         covariance_matrix=self.energy_function.prior_var.to(self.device)
+        #     )
+
+
+        # # gaussian prior
+        # self.coverage_prior = torch.distributions.MultivariateNormal(
+        #     torch.zeros(self.energy_function.dimensionality, device=self.device),
+        #     torch.eye(self.energy_function.dimensionality, device=self.device) * self.noise_schedule.h(1),
+        # )
+        
+        # n-dim uniform prior
+        self.coverage_prior = torch.distributions.Independent(
+            torch.distributions.Uniform(
+                low=torch.full((self.energy_function.dimensionality,), -1.0, device=self.device),
+                high=torch.full((self.energy_function.dimensionality,), 1.0, device=self.device)
+            ),
+            1  # reinterpreted_batch_ndims=1, makes it multivariate
+        )
+        
+        
+        # self.coverage_prior = self.prior
+        if self.use_buffer:
             self.buffer.initialize(self.device)
             if self.init_from_prior:
                 init_states = self.coverage_prior.sample((self.num_init_samples,))
@@ -803,8 +820,9 @@ class DEMLitModule(LightningModule):
                 init_states = self.generate_samples(
                     reverse_sde, self.num_init_samples, diffusion_scale=self.diffusion_scale
                 )
-                init_energies = self.energy_function(init_states)
-                self.buffer.add(init_states, init_energies)
+                # init_energies = self.energy_function(init_states)
+                # self.buffer.add(init_states, init_energies)
+            self.buffer.add(init_states, torch.tensor(0.))
 
         if self.hparams.compile and stage == "fit":
             self.net = torch.compile(self.net)
@@ -812,18 +830,42 @@ class DEMLitModule(LightningModule):
     def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True):
         """
         Custom state_dict loader to handle `torch.compile`'s `_orig_mod.` prefix.
-        This allows loading a checkpoint saved from a compiled model into a non-compiled model.
+        This allows loading a checkpoint saved from a compiled model into a non-compiled model,
+        or loading a checkpoint from a non-compiled model into a compiled model.
         """
         # Create a new state_dict to store the corrected keys
         new_state_dict = {}
+        
+        # Get the current model's keys to determine the expected format
+        current_keys = set(self.state_dict().keys())
+        
+        # Check if current model is compiled (has _orig_mod keys)
+        current_is_compiled = any(k.startswith("net._orig_mod.") for k in current_keys)
+        
+        # Check if state_dict is from compiled model (has _orig_mod keys)
+        state_dict_is_compiled = any(k.startswith("net._orig_mod.") for k in state_dict.keys())
+        
         for k, v in state_dict.items():
-            # Check for the prefix added by torch.compile
-            if k.startswith("net._orig_mod."):
-                # Remove the `_orig_mod.` prefix
-                new_k = "net." + k[len("net._orig_mod."):]
-                new_state_dict[new_k] = v
+            if current_is_compiled and not state_dict_is_compiled:
+                # Current model is compiled, but state_dict is not compiled
+                # Add _orig_mod prefix to net keys
+                if k.startswith("net.") and not k.startswith("net._orig_mod."):
+                    new_k = "net._orig_mod." + k[len("net."):]
+                    new_state_dict[new_k] = v
+                else:
+                    new_state_dict[k] = v
+            elif not current_is_compiled and state_dict_is_compiled:
+                # Current model is not compiled, but state_dict is compiled
+                # Remove _orig_mod prefix from net keys
+                if k.startswith("net._orig_mod."):
+                    new_k = "net." + k[len("net._orig_mod."):]
+                    new_state_dict[new_k] = v
+                else:
+                    new_state_dict[k] = v
             else:
+                # Both have same compilation status, no conversion needed
                 new_state_dict[k] = v
+                
         # Call the parent's load_state_dict with the new, corrected state_dict
         super().load_state_dict(new_state_dict, strict=strict)
 
